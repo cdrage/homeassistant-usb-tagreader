@@ -9,56 +9,25 @@ import signal
 import sys
 from typing import Optional, Dict, Any
 import logging
-
-try:
-    import nfc
-except ImportError:
-    print("Error: nfc library not found. Install it with: pip install nfcpy")
-    sys.exit(1)
+import nfc
 
 
-class NFCReader:
-    """NFC Reader class to handle tag detection and reading."""
+class NFCHandler:
+    """Handles NFC tag operations with a ContactlessFrontend instance."""
 
-    def __init__(self) -> None:
-        """Initialize the NFC reader."""
-        self.running: bool = True
-        self.clf: Optional[nfc.ContactlessFrontend] = None
-        self.setup_logging()
+    def __init__(self, clf: nfc.ContactlessFrontend, logger) -> None:
+        """Initialize the handler with a ContactlessFrontend instance."""
+        self.clf: nfc.ContactlessFrontend = clf
+        self.logger = logger
+        self.running = True
 
-    def setup_logging(self) -> None:
-        """Setup logging configuration."""
-        logging.basicConfig(
-            level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-        )
-        self.logger = logging.getLogger(__name__)
+    def set_running(self, running: bool) -> None:
+        """Set the running state."""
+        self.running = running
 
-    def signal_handler(self, _signum: int, _frame: Any) -> None:
-        """Handle interrupt signals for graceful shutdown."""
-        self.logger.info("Received interrupt signal. Shutting down...")
-        self.running = False
-        if self.clf:
-            self.clf.close()
-        sys.exit(0)
-
-    def connect_reader(self) -> bool:
-        """
-        Connect to an available NFC reader.
-
-        Returns:
-            bool: True if connection successful, False otherwise
-        """
-        try:
-            self.logger.info("Searching for NFC readers...")
-            self.clf = nfc.ContactlessFrontend("usb")
-            if self.clf:
-                self.logger.info("Connected to NFC reader: %s", self.clf)
-                return True
-            self.logger.error("No NFC readers found")
-            return False
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            self.logger.error("Failed to connect to NFC reader: %s", e)
-            return False
+    def close(self) -> None:
+        """Close the NFC connection."""
+        self.clf.close()
 
     def format_tag_data(self, tag: nfc.tag.Tag) -> Dict[str, Any]:
         """
@@ -73,8 +42,8 @@ class NFCReader:
         tag_info = {
             "type": str(type(tag).__name__),
             "identifier": tag.identifier.hex() if tag.identifier else "Unknown",
-            "ndef_capacity": getattr(tag, "ndef", {}).get("capacity", "N/A"),
-            "ndef_length": getattr(tag, "ndef", {}).get("length", "N/A"),
+            "ndef_capacity": getattr(getattr(tag, "ndef", None), "capacity", "N/A") if hasattr(tag, "ndef") and tag.ndef else "N/A",
+            "ndef_length": getattr(getattr(tag, "ndef", None), "length", "N/A") if hasattr(tag, "ndef") and tag.ndef else "N/A",
         }
 
         # Try to read NDEF records if available
@@ -108,7 +77,7 @@ class NFCReader:
             tag: The detected NFC tag
 
         Returns:
-            bool: Always returns True to keep listening
+            bool: False to stop listening and trigger reconnection on I/O errors
         """
         self.logger.info("=" * 50)
         self.logger.info("NFC TAG DETECTED!")
@@ -136,6 +105,11 @@ class NFCReader:
             if "ndef_error" in tag_data:
                 print(f"\nNDEF Error: {tag_data['ndef_error']}")
 
+        except (OSError, IOError) as e:
+            self.logger.error("I/O error reading tag: %s", e)
+            self.logger.info("Tag read caused I/O error, will reconnect...")
+            return False  # Stop listening to trigger reconnection
+
         except Exception as e:  # pylint: disable=broad-exception-caught
             self.logger.error("Error reading tag: %s", e)
 
@@ -145,35 +119,159 @@ class NFCReader:
 
         return True  # Keep listening for more tags
 
+    def listen_for_tags(self) -> None:
+        """Listen for NFC tags continuously."""
+        error_count = 0
+        max_errors = 10  # Maximum consecutive errors before reconnecting
+
+        try:
+            while self.running:
+                try:
+                    # Use a timer to detect if we're stuck in error loops
+                    start_time = time.time()
+                    connection_result = self.clf.connect(
+                        rdwr={"on-connect": self.on_tag_connect},
+                        terminate=lambda: not self.running,
+                    )
+
+                    # If connect call returns quickly, it might be an error loop
+                    elapsed = time.time() - start_time
+                    if elapsed < 0.5:  # Returned too quickly
+                        error_count += 1
+                        if error_count >= max_errors:
+                            self.logger.warning(
+                                f"Detected {error_count} quick returns, forcing reconnection...")
+                            raise OSError(
+                                "Forced reconnection due to error loop")
+                    else:
+                        error_count = 0  # Reset counter on successful operation
+
+                    # If connection returns False, it may indicate an error
+                    if connection_result is False:
+                        self.logger.warning(
+                            "Connection returned False, may indicate communication issues")
+                        time.sleep(1)  # Brief pause before continuing
+                    if not self.running:
+                        break
+                    time.sleep(0.1)  # Small delay to prevent busy waiting
+
+                except (OSError, IOError) as e:
+                    self.logger.error("I/O error during tag scanning: %s", e)
+                    raise  # Re-raise to trigger reconnection in parent
+
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    self.logger.error(
+                        "Unexpected error during tag listening: %s", e)
+                    time.sleep(1)  # Brief pause before continuing
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            self.logger.error("Fatal error during tag listening: %s", e)
+            raise
+
+
+class NFCReader:
+    """NFC Reader class to handle tag detection and reading."""
+
+    def __init__(self) -> None:
+        """Initialize the NFC reader."""
+        self.running: bool = True
+        self.nfc_handler: Optional[NFCHandler] = None
+        self.setup_logging()
+
+    def setup_logging(self) -> None:
+        """Setup logging configuration."""
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+        )
+        self.logger = logging.getLogger(__name__)
+
+    def signal_handler(self, _signum: int, _frame: Any) -> None:
+        """Handle interrupt signals for graceful shutdown."""
+        self.logger.info("Received interrupt signal. Shutting down...")
+        self.running = False
+        if self.nfc_handler:
+            self.nfc_handler.set_running(False)
+            self.nfc_handler.close()
+        sys.exit(0)
+
+    def connect_reader(self) -> bool:
+        """
+        Connect to an available NFC reader and create handler.
+
+        Returns:
+            bool: True if connection successful, False otherwise
+        """
+        try:
+            self.logger.info("Searching for NFC readers...")
+            clf = nfc.ContactlessFrontend("usb")
+            if clf:
+                self.logger.info("Connected to NFC reader: %s", clf)
+                self.nfc_handler = NFCHandler(clf, self.logger)
+                self.nfc_handler.set_running(self.running)
+                return True
+            self.logger.error("No NFC readers found")
+            return False
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            self.logger.error("Failed to connect to NFC reader: %s", e)
+            return False
+
     def start_listening(self) -> None:
         """Start listening for NFC tags."""
-        if not self.connect_reader():
-            return
-
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
+
+        # Keep trying to connect until successful or interrupted
+        while self.running and not self.connect_reader():
+            self.logger.warning(
+                "Could not connect to NFC reader. Retrying in 5 seconds...")
+            time.sleep(5)
 
         self.logger.info("NFC Reader started. Listening for tags...")
         self.logger.info("Press Ctrl+C to stop")
 
         try:
             while self.running:
-                # Listen for tags with a timeout to allow checking self.running
-                if self.clf:
-                    self.clf.connect(
-                        rdwr={"on-connect": self.on_tag_connect},
-                        terminate=lambda: not self.running,
-                    )
-                if not self.running:
-                    break
-                time.sleep(0.1)  # Small delay to prevent busy waiting
+                try:
+                    if self.nfc_handler:
+                        self.nfc_handler.listen_for_tags()
+                    if not self.running:
+                        break
+                    time.sleep(0.1)  # Small delay to prevent busy waiting
+
+                except (OSError, IOError) as e:
+                    self.logger.error("I/O error during tag scanning: %s", e)
+                    self.logger.info(
+                        "Attempting to reconnect to NFC reader...")
+
+                    # Close current connection and try to reconnect
+                    if self.nfc_handler:
+                        try:
+                            self.nfc_handler.close()
+                        except Exception:
+                            pass
+                        self.nfc_handler = None
+
+                    # Wait before reconnecting
+                    time.sleep(2)
+
+                    # Try to reconnect
+                    if not self.connect_reader():
+                        self.logger.error(
+                            "Failed to reconnect. Waiting 5 seconds before retry...")
+                        time.sleep(5)
+                        continue
+
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    self.logger.error(
+                        "Unexpected error during tag listening: %s", e)
+                    time.sleep(1)  # Brief pause before continuing
 
         except Exception as e:  # pylint: disable=broad-exception-caught
-            self.logger.error("Error during tag listening: %s", e)
+            self.logger.error("Fatal error during tag listening: %s", e)
         finally:
-            if self.clf:
-                self.clf.close()
+            if self.nfc_handler:
+                self.nfc_handler.close()
                 self.logger.info("NFC reader connection closed")
 
 
