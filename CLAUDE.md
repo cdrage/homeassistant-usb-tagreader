@@ -1,0 +1,1 @@
+- This is inside a debian devcontainer. Any tools you need can be installed. Sudo does not require a password.
