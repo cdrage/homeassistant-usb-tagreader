@@ -8,9 +8,16 @@ set -e
 REGISTRY="registry.apps.lasath.com"
 IMAGE_NAME="nfc-reader"
 REMOTE_HOST="$1"
-TAG="${2:-latest}"
-FULL_IMAGE_NAME="$REGISTRY/$IMAGE_NAME:$TAG"
 CONTAINER_NAME="nfc-reader"
+
+# Determine TAG based on second argument
+if [[ "$2" == --* ]]; then
+    TAG="latest"
+else
+    TAG="${2:-latest}"
+fi
+
+FULL_IMAGE_NAME="$REGISTRY/$IMAGE_NAME:$TAG"
 
 # Colors for output
 RED='\033[0;31m'
@@ -42,6 +49,7 @@ print_usage() {
     echo "  $0 192.168.1.100 v1.0         # Deploy v1.0 tag to IP address"
     echo "  $0 hostname --logs             # View logs from hostname"
     echo "  $0 hostname --status           # Check status on hostname"
+    echo "  $0 hostname --sync             # Run container in foreground with live logs"
 }
 
 # Check if SSH is available
@@ -113,6 +121,38 @@ show_logs() {
     ssh "$REMOTE_HOST" "docker logs -f $CONTAINER_NAME"
 }
 
+# Deploy and run container synchronously (foreground with live logs)
+deploy_sync() {
+    log_info "Deploying NFC Reader container to $REMOTE_HOST in sync mode..."
+    
+    # Create sync deployment script to run on remote host
+    local deploy_script=$(cat <<EOF
+#!/bin/bash
+set -e
+
+echo "Stopping existing container if running..."
+if docker ps -q -f name=${CONTAINER_NAME} | grep -q .; then
+    docker stop ${CONTAINER_NAME}
+fi
+
+echo "Removing existing container if it exists..."
+if docker ps -aq -f name=${CONTAINER_NAME} | grep -q .; then
+    docker rm ${CONTAINER_NAME}
+fi
+
+echo "Pulling latest image: ${FULL_IMAGE_NAME}"
+docker pull ${FULL_IMAGE_NAME}
+
+echo "Starting NFC Reader container in foreground..."
+echo "Press Ctrl+C to stop the container and exit"
+docker run --rm --name "${CONTAINER_NAME}" --privileged --device=/dev/bus/usb:/dev/bus/usb -v /dev:/dev "${FULL_IMAGE_NAME}"
+EOF
+)
+    
+    # Execute sync deployment script on remote host
+    ssh -t "$REMOTE_HOST" "bash -s" <<< "$deploy_script"
+}
+
 # Validate arguments
 if [[ -z "$REMOTE_HOST" ]]; then
     log_error "Remote host is required"
@@ -138,6 +178,12 @@ case "${2:-}" in
         show_status
         exit 0
         ;;
+    --sync)
+        check_ssh
+        test_ssh_connection
+        deploy_sync
+        exit 0
+        ;;
 esac
 
 # Handle help flag as first argument
@@ -160,3 +206,4 @@ show_status
 log_info "Deployment completed successfully!"
 log_info "To view logs: $0 $REMOTE_HOST --logs"
 log_info "To check status: $0 $REMOTE_HOST --status"
+log_info "To run in sync mode: $0 $REMOTE_HOST --sync"

@@ -1,10 +1,10 @@
 FROM python:3.11-slim
 
-# Install system dependencies for libnfc
+# Install system dependencies for PCSC
 RUN apt-get update && apt-get install -y \
-    libnfc6 \
-    libnfc-bin \
-    libnfc-dev \
+    libpcsclite-dev \
+    pcscd \
+    python3-pyscard \
     libusb-1.0-0-dev \
     pkg-config \
     gcc \

@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 """
-NFC Tag Reader using libnfc
+NFC Tag Reader using PCSC
 Listens for NFC tags on any available USB NFC reader and prints their contents.
 """
 
 import time
 import signal
 import sys
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple, List
 import logging
-import nfc
+from smartcard.System import readers
+from smartcard.CardConnection import CardConnection
+from smartcard.util import toHexString, toBytes
 
 
 class NFCHandler:
-    """Handles NFC tag operations with a ContactlessFrontend instance."""
+    """Handles NFC tag operations with PCSC."""
 
-    def __init__(self, clf: nfc.ContactlessFrontend, logger) -> None:
-        """Initialize the handler with a ContactlessFrontend instance."""
-        self.clf: nfc.ContactlessFrontend = clf
+    # PCSC constants
+    INS_READ = 0xB0
+    NDEF_TAG = 0x03
+    
+    def __init__(self, connection: CardConnection, logger) -> None:
+        """Initialize the handler with a PCSC connection."""
+        self.connection = connection
         self.logger = logger
         self.running = True
 
@@ -26,143 +32,185 @@ class NFCHandler:
         self.running = running
 
     def close(self) -> None:
-        """Close the NFC connection."""
-        self.clf.close()
+        """Close the PCSC connection."""
+        try:
+            self.connection.disconnect()
+        except Exception as e:
+            self.logger.debug(f"Error closing connection: {e}")
 
-    def format_tag_data(self, tag: nfc.tag.Tag) -> Dict[str, Any]:
+    def _send_apdu(self, apdu: List[int]) -> Tuple[List[int], int, int]:
+        """Send APDU command and return response."""
+        try:
+            response, sw1, sw2 = self.connection.transmit(apdu)
+            return response, sw1, sw2
+        except Exception as e:
+            self.logger.error(f"APDU transmission error: {e}")
+            raise
+
+    def read_t2_ndef(self) -> Tuple[Optional[str], Optional[bytes]]:
+        """
+        Read NDEF data from Type 2 tag.
+        
+        Returns:
+            Tuple of (error_message, ndef_data)
+        """
+        try:
+            # Read capabilities container (CC) from block 3
+            response, sw1, sw2 = self._send_apdu([0xff, self.INS_READ, 0x00, 0x03, 4])
+            
+            if sw1 != 0x90 or sw2 != 0x00:
+                return f"Failed to read CC: {sw1:02x}{sw2:02x}", None
+                
+            if len(response) < 4:
+                return "Invalid CC response length", None
+                
+            # Extract data area size from CC
+            data_area_size = response[2] * 8
+            max_ndef_size = data_area_size - 2
+            
+            self.logger.info(f"Data area size: {data_area_size}, Max NDEF size: {max_ndef_size}")
+            
+            # Start reading from block 4 (NDEF data area)
+            ndef_data = bytearray()
+            block_offset = 4
+            
+            # Read first block to get NDEF TLV
+            response, sw1, sw2 = self._send_apdu([0xff, self.INS_READ, 0x00, block_offset, 4])
+            
+            if sw1 != 0x90 or sw2 != 0x00:
+                return f"Failed to read NDEF TLV: {sw1:02x}{sw2:02x}", None
+                
+            if len(response) < 2:
+                return "Invalid NDEF TLV response", None
+                
+            # Check for NDEF TLV tag
+            if response[0] != self.NDEF_TAG:
+                return f"No NDEF tag found, got: 0x{response[0]:02x}", None
+                
+            ndef_length = response[1]
+            self.logger.info(f"NDEF message length: {ndef_length}")
+            
+            if ndef_length == 0:
+                return None, b""  # Empty NDEF message
+                
+            # Read NDEF data starting from position 2 in the first block
+            bytes_read = 0
+            remaining_in_block = min(2, ndef_length)  # Max 2 bytes from first block
+            
+            if remaining_in_block > 0:
+                ndef_data.extend(response[2:2 + remaining_in_block])
+                bytes_read += remaining_in_block
+            
+            # Read additional blocks if needed
+            block_offset += 1
+            while bytes_read < ndef_length and block_offset < 256:
+                response, sw1, sw2 = self._send_apdu([0xff, self.INS_READ, 0x00, block_offset, 4])
+                
+                if sw1 != 0x90 or sw2 != 0x00:
+                    return f"Failed to read block {block_offset}: {sw1:02x}{sw2:02x}", None
+                    
+                remaining_bytes = ndef_length - bytes_read
+                bytes_to_copy = min(4, remaining_bytes)
+                
+                ndef_data.extend(response[:bytes_to_copy])
+                bytes_read += bytes_to_copy
+                block_offset += 1
+                
+            return None, bytes(ndef_data)
+            
+        except Exception as e:
+            return f"Exception during NDEF read: {e}", None
+
+    def format_tag_data(self, atr: List[int]) -> Dict[str, Any]:
         """
         Format tag data for display.
 
         Args:
-            tag: The NFC tag object
+            atr: Answer to Reset from the card
 
         Returns:
             Dict containing formatted tag information
         """
         tag_info = {
-            "type": str(type(tag).__name__),
-            "identifier": tag.identifier.hex() if tag.identifier else "Unknown",
-            "ndef_capacity": getattr(getattr(tag, "ndef", None), "capacity", "N/A") if hasattr(tag, "ndef") and tag.ndef else "N/A",
-            "ndef_length": getattr(getattr(tag, "ndef", None), "length", "N/A") if hasattr(tag, "ndef") and tag.ndef else "N/A",
+            "type": "Type 2 (assumed)",
+            "atr": toHexString(atr),
         }
 
-        # Try to read NDEF records if available
-        if hasattr(tag, "ndef") and tag.ndef:
-            try:
-                tag_info["ndef_records"] = []
-                if tag.ndef.records:
-                    for record in tag.ndef.records:
-                        record_info = {
-                            "type": record.type,
-                            "name": record.name,
-                            "data": (
-                                record.data
-                                if len(record.data) < 100
-                                else f"{record.data[:100]}... (truncated)"
-                            ),
-                        }
-                        tag_info["ndef_records"].append(record_info)
-                else:
-                    tag_info["ndef_records"] = "No NDEF records found"
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                tag_info["ndef_error"] = str(e)
+        # Try to read NDEF data
+        try:
+            error_msg, ndef_data = self.read_t2_ndef()
+            
+            if error_msg:
+                tag_info["ndef_error"] = error_msg
+            elif ndef_data is not None:
+                tag_info["ndef_length"] = len(ndef_data)
+                tag_info["ndef_data_hex"] = ndef_data.hex()
+                
+                # Try to decode as text if it looks like a text record
+                if len(ndef_data) > 3:
+                    try:
+                        # Simple text record detection (very basic)
+                        if ndef_data[0] == 0xD1 and ndef_data[1] == 0x01:  # Well-known text record
+                            payload_length = ndef_data[2]
+                            if len(ndef_data) >= 3 + payload_length:
+                                # Skip language code (first byte of payload)
+                                text_start = 6 if len(ndef_data) > 5 else 4
+                                text_data = ndef_data[text_start:3 + payload_length]
+                                tag_info["ndef_text"] = text_data.decode('utf-8', errors='ignore')
+                    except Exception as e:
+                        tag_info["text_decode_error"] = str(e)
+                        
+        except Exception as e:
+            tag_info["ndef_error"] = str(e)
 
         return tag_info
 
-    def on_tag_connect(self, tag: nfc.tag.Tag) -> bool:
+    def on_tag_connect(self, atr: List[int]) -> None:
         """
-        Callback function when a tag is detected.
+        Process detected NFC tag.
 
         Args:
-            tag: The detected NFC tag
-
-        Returns:
-            bool: False to stop listening and trigger reconnection on I/O errors
+            atr: Answer to Reset from the card
         """
         self.logger.info("=" * 50)
         self.logger.info("NFC TAG DETECTED!")
         self.logger.info("=" * 50)
 
-        try:
-            tag_data = self.format_tag_data(tag)
-
-            print(f"Tag Type: {tag_data['type']}")
-            print(f"Identifier: {tag_data['identifier']}")
-            print(f"NDEF Capacity: {tag_data['ndef_capacity']}")
-            print(f"NDEF Length: {tag_data['ndef_length']}")
-
-            if "ndef_records" in tag_data:
-                print("\nNDEF Records:")
-                if isinstance(tag_data["ndef_records"], list):
-                    for i, record in enumerate(tag_data["ndef_records"]):
-                        print(f"  Record {i + 1}:")
-                        print(f"    Type: {record['type']}")
-                        print(f"    Name: {record['name']}")
-                        print(f"    Data: {record['data']}")
-                else:
-                    print(f"  {tag_data['ndef_records']}")
-
-            if "ndef_error" in tag_data:
-                print(f"\nNDEF Error: {tag_data['ndef_error']}")
-
-        except (OSError, IOError) as e:
-            self.logger.error("I/O error reading tag: %s", e)
-            self.logger.info("Tag read caused I/O error, will reconnect...")
-            return False  # Stop listening to trigger reconnection
-
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            self.logger.error("Error reading tag: %s", e)
-
-        print("\n" + "=" * 50)
-        print("Waiting for next tag...")
-        print("=" * 50 + "\n")
-
-        return True  # Keep listening for more tags
+        tag_data = self.format_tag_data(atr)
+        
+        # Print tag information
+        for key, value in tag_data.items():
+            self.logger.info(f"{key}: {value}")
 
     def listen_for_tags(self) -> None:
         """Listen for NFC tags continuously."""
-        error_count = 0
-        max_errors = 10  # Maximum consecutive errors before reconnecting
-
         try:
             while self.running:
                 try:
-                    # Use a timer to detect if we're stuck in error loops
-                    start_time = time.time()
-                    connection_result = self.clf.connect(
-                        rdwr={"on-connect": self.on_tag_connect},
-                        terminate=lambda: not self.running,
-                    )
+                    # Wait for card
+                    atr = self.connection.connect()
+                    self.logger.debug(f"Card connected with ATR: {toHexString(atr)}")
+                    
+                    # Process the tag
+                    self.on_tag_connect(atr)
+                    
+                    # Wait for card removal
+                    self.logger.info("Waiting for card removal...")
+                    while self.running:
+                        try:
+                            # Send a simple command to check if card is still present
+                            self.connection.transmit([0xff, 0xca, 0x00, 0x00, 0x00])
+                            time.sleep(0.5)
+                        except Exception:
+                            # Card removed
+                            self.logger.info("Card removed")
+                            break
+                    
+                    time.sleep(0.1)  # Brief pause before next scan
 
-                    # If connect call returns quickly, it might be an error loop
-                    elapsed = time.time() - start_time
-                    if elapsed < 0.5:  # Returned too quickly
-                        error_count += 1
-                        if error_count >= max_errors:
-                            self.logger.warning(
-                                f"Detected {error_count} quick returns, forcing reconnection...")
-                            raise OSError(
-                                "Forced reconnection due to error loop")
-                    else:
-                        error_count = 0  # Reset counter on successful operation
-
-                    # If connection returns False, it may indicate an error
-                    if connection_result is False:
-                        self.logger.warning(
-                            "Connection returned False, may indicate communication issues")
-                        time.sleep(1)  # Brief pause before continuing
-                    if not self.running:
-                        break
-                    time.sleep(0.1)  # Small delay to prevent busy waiting
-
-                except (OSError, IOError) as e:
-                    self.logger.error("I/O error during tag scanning: %s", e)
-                    raise  # Re-raise to trigger reconnection in parent
-
-                except Exception as e:  # pylint: disable=broad-exception-caught
-                    self.logger.error(
-                        "Unexpected error during tag listening: %s", e)
-                    time.sleep(1)  # Brief pause before continuing
+                except Exception as e:
+                    # Card not present or communication error
+                    time.sleep(0.5)  # Wait before retrying
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             self.logger.error("Fatal error during tag listening: %s", e)
@@ -196,23 +244,33 @@ class NFCReader:
 
     def connect_reader(self) -> bool:
         """
-        Connect to an available NFC reader and create handler.
+        Connect to an available PCSC reader and create handler.
 
         Returns:
             bool: True if connection successful, False otherwise
         """
         try:
-            self.logger.info("Searching for NFC readers...")
-            clf = nfc.ContactlessFrontend("usb")
-            if clf:
-                self.logger.info("Connected to NFC reader: %s", clf)
-                self.nfc_handler = NFCHandler(clf, self.logger)
-                self.nfc_handler.set_running(self.running)
-                return True
-            self.logger.error("No NFC readers found")
-            return False
+            self.logger.info("Searching for PCSC readers...")
+            reader_list = readers()
+            
+            if not reader_list:
+                self.logger.error("No PCSC readers found")
+                return False
+                
+            # Use the first available reader
+            reader = reader_list[0]
+            self.logger.info(f"Found reader: {reader}")
+            
+            # Create connection
+            connection = reader.createConnection()
+            
+            self.logger.info("Connected to PCSC reader")
+            self.nfc_handler = NFCHandler(connection, self.logger)
+            self.nfc_handler.set_running(self.running)
+            return True
+            
         except Exception as e:  # pylint: disable=broad-exception-caught
-            self.logger.error("Failed to connect to NFC reader: %s", e)
+            self.logger.error("Failed to connect to PCSC reader: %s", e)
             return False
 
     def start_listening(self) -> None:
@@ -224,10 +282,10 @@ class NFCReader:
         # Keep trying to connect until successful or interrupted
         while self.running and not self.connect_reader():
             self.logger.warning(
-                "Could not connect to NFC reader. Retrying in 5 seconds...")
+                "Could not connect to PCSC reader. Retrying in 5 seconds...")
             time.sleep(5)
 
-        self.logger.info("NFC Reader started. Listening for tags...")
+        self.logger.info("PCSC Reader started. Listening for tags...")
         self.logger.info("Press Ctrl+C to stop")
 
         try:
@@ -239,10 +297,9 @@ class NFCReader:
                         break
                     time.sleep(0.1)  # Small delay to prevent busy waiting
 
-                except (OSError, IOError) as e:
-                    self.logger.error("I/O error during tag scanning: %s", e)
-                    self.logger.info(
-                        "Attempting to reconnect to NFC reader...")
+                except Exception as e:
+                    self.logger.error("Error during tag scanning: %s", e)
+                    self.logger.info("Attempting to reconnect to PCSC reader...")
 
                     # Close current connection and try to reconnect
                     if self.nfc_handler:
@@ -262,25 +319,20 @@ class NFCReader:
                         time.sleep(5)
                         continue
 
-                except Exception as e:  # pylint: disable=broad-exception-caught
-                    self.logger.error(
-                        "Unexpected error during tag listening: %s", e)
-                    time.sleep(1)  # Brief pause before continuing
-
         except Exception as e:  # pylint: disable=broad-exception-caught
             self.logger.error("Fatal error during tag listening: %s", e)
         finally:
             if self.nfc_handler:
                 self.nfc_handler.close()
-                self.logger.info("NFC reader connection closed")
+                self.logger.info("PCSC reader connection closed")
 
 
 def main() -> None:
     """Main function to start the NFC reader."""
-    print("NFC Tag Reader")
+    print("NFC Tag Reader (PCSC)")
     print("=" * 50)
     print("This program will listen for NFC tags and display their contents.")
-    print("Make sure your NFC reader is connected via USB.")
+    print("Make sure your NFC reader is connected and PCSC daemon is running.")
     print("=" * 50 + "\n")
 
     reader = NFCReader()
