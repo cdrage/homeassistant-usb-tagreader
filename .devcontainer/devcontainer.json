@@ -26,5 +26,9 @@
 				"Anthropic.claude-code"
 			]
 		}
-	}
+	},
+	"mounts": [
+		"type=bind,source=/home/fernie/.config/claude,target=/home/vscode/.config/claude,consistency=cached",
+		"type=bind,source=/home/fernie/.config/claude-home,target=/home/vscode/.claude,consistency=cached"
+	]
 }
