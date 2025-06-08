@@ -42,22 +42,29 @@ check_docker() {
 
 # Build Docker image
 build_docker_image() {
-    log_info "Building Docker image: $FULL_IMAGE_NAME"
-    docker build -t "$FULL_IMAGE_NAME" .
+    log_info "Building multi-platform Docker image: $FULL_IMAGE_NAME"
     
-    # Also tag as latest
-    docker tag "$FULL_IMAGE_NAME" "$REGISTRY/$IMAGE_NAME:latest"
+    # Create buildx builder if it doesn't exist
+    if ! docker buildx ls | grep -q multiarch; then
+        log_info "Creating multiarch builder..."
+        docker buildx create --name multiarch --use
+        docker buildx inspect --bootstrap
+    else
+        docker buildx use multiarch
+    fi
+    
+    # Build for multiple platforms
+    docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        -t "$FULL_IMAGE_NAME" \
+        -t "$REGISTRY/$IMAGE_NAME:latest" \
+        --push \
+        .
 }
 
-# Push to registry
+# Push to registry (handled by buildx)
 push_to_registry() {
-    log_info "Pushing image to registry: $FULL_IMAGE_NAME"
-    docker push "$FULL_IMAGE_NAME"
-    
-    if [[ "$TAG" != "latest" ]]; then
-        log_info "Pushing latest tag..."
-        docker push "$REGISTRY/$IMAGE_NAME:latest"
-    fi
+    log_info "Images pushed to registry during build"
 }
 
 # Main execution

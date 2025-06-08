@@ -20,8 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY nfc_reader.py .
 
-# Create a non-root user for security
-RUN useradd -m -u 1000 nfcuser && chown -R nfcuser:nfcuser /app
+# Create a non-root user and add to dialout group for USB access
+RUN useradd -m -u 1000 nfcuser && \
+    usermod -a -G dialout nfcuser && \
+    chown -R nfcuser:nfcuser /app
 USER nfcuser
 
 # Run the application

@@ -76,30 +76,24 @@ deploy_container() {
 set -e
 
 echo "Stopping existing container if running..."
-if docker ps -q -f name="$CONTAINER_NAME" | grep -q .; then
-    docker stop "$CONTAINER_NAME"
+if docker ps -q -f name=${CONTAINER_NAME} | grep -q .; then
+    docker stop ${CONTAINER_NAME}
 fi
 
 echo "Removing existing container if it exists..."
-if docker ps -aq -f name="$CONTAINER_NAME" | grep -q .; then
-    docker rm "$CONTAINER_NAME"
+if docker ps -aq -f name=${CONTAINER_NAME} | grep -q .; then
+    docker rm ${CONTAINER_NAME}
 fi
 
-echo "Pulling latest image: $FULL_IMAGE_NAME"
-docker pull "$FULL_IMAGE_NAME"
+echo "Pulling latest image: ${FULL_IMAGE_NAME}"
+docker pull ${FULL_IMAGE_NAME}
 
 echo "Starting NFC Reader container..."
-docker run -d \\
-    --name "$CONTAINER_NAME" \\
-    --privileged \\
-    --device=/dev/bus/usb:/dev/bus/usb \\
-    -v /dev:/dev \\
-    --restart unless-stopped \\
-    "$FULL_IMAGE_NAME"
+docker run -d --name "${CONTAINER_NAME}" --privileged --device=/dev/bus/usb:/dev/bus/usb -v /dev:/dev "${FULL_IMAGE_NAME}"
 
 echo "Container deployed successfully!"
 echo "Container logs:"
-docker logs "$CONTAINER_NAME"
+docker logs ${CONTAINER_NAME}
 EOF
 )
     
