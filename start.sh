@@ -22,7 +22,8 @@ trap "pkill -SIGTERM pcscd" EXIT
 
 # Switch to non-root user and run the Python application
 echo "Starting NFC Reader application..."
-exec su -c "cd /app && python nfc_reader.py" nfcuser
+cd /app 
+python nfc_reader.py
 
 # Wait a while to avoid docker restarting the container immediately
 echo "NFC Reader application exited, probably due to an error."
