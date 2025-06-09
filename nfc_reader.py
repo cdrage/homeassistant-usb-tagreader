@@ -7,15 +7,25 @@ import atexit
 import time
 import threading
 import requests
+import logging
 from typing import Optional
 from smartcard.CardConnection import CardConnection
 from smartcard.CardMonitoring import CardMonitor, CardObserver
 from smartcard.util import toHexString
+from smartcard.Exceptions import CardConnectionException, NoCardException
+from smartcard.System import readers
 
 from ndef_decoder import NDEFDecoder
 
 HA_TAG_PREFIX = "https://www.home-assistant.io/tag/"
 WEBHOOK_URL = "https://ha.apps.lasath.com/api/webhook/jukebox-play-qailegvCNUt_rXElJM2AYwW5"
+
+# Configure logging for debugging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stderr
+)
 
 # Global variables for resource cleanup
 _connection: Optional[CardConnection] = None
@@ -43,25 +53,73 @@ def send_ha_webhook(tag_id: str) -> bool:
         return False
 
 
+def check_pcsc_system() -> bool:
+    """Check PC/SC system status and available readers"""
+    try:
+        print("🔍 Checking PC/SC system status...", file=sys.stderr)
+        
+        # Get available readers
+        available_readers = readers()
+        print(f"🔍 Available readers: {len(available_readers)}", file=sys.stderr)
+        
+        for i, reader in enumerate(available_readers):
+            print(f"  Reader {i}: {reader}", file=sys.stderr)
+            
+            try:
+                # Try to connect to see if there's a card
+                connection = reader.createConnection()
+                connection.connect()
+                print(f"  ✅ Reader {i} has a card present", file=sys.stderr)
+                print(f"  ATR: {toHexString(connection.getATR())}", file=sys.stderr)
+                connection.disconnect()
+            except NoCardException:
+                print(f"  ℹ️  Reader {i} has no card", file=sys.stderr)
+            except Exception as e:
+                print(f"  ⚠️  Reader {i} error: {e}", file=sys.stderr)
+        
+        if not available_readers:
+            print("❌ No PC/SC readers found!", file=sys.stderr)
+            return False
+            
+        return True
+        
+    except Exception as e:
+        print(f"❌ PC/SC system check failed: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return False
+
+
 class NFCCardObserver(CardObserver):
     """Observer for NFC card insertion and removal events"""
     
     def __init__(self):
         self.cards_processed = 0
         self.processing_lock = threading.Lock()
+        print("🔍 NFCCardObserver initialized", file=sys.stderr)
         
     def update(self, observable, handlers):
         """Called when card events occur"""
-        (addedcards, removedcards) = handlers
+        print(f"🔍 Observer update called with {len(handlers) if handlers else 0} handlers", file=sys.stderr)
         
-        # Handle card insertions
-        for card in addedcards:
-            print(f"Card inserted: {toHexString(card.atr)}", file=sys.stderr)
-            threading.Thread(target=self._process_card, args=(card,), daemon=True).start()
-        
-        # Handle card removals
-        for card in removedcards:
-            print(f"Card removed: {toHexString(card.atr)}", file=sys.stderr)
+        try:
+            (addedcards, removedcards) = handlers
+            print(f"🔍 Added cards: {len(addedcards)}, Removed cards: {len(removedcards)}", file=sys.stderr)
+            
+            # Handle card insertions
+            for card in addedcards:
+                print(f"📟 Card inserted: {toHexString(card.atr)}", file=sys.stderr)
+                print(f"🔍 Starting thread to process card", file=sys.stderr)
+                threading.Thread(target=self._process_card, args=(card,), daemon=True).start()
+            
+            # Handle card removals
+            for card in removedcards:
+                print(f"📤 Card removed: {toHexString(card.atr)}", file=sys.stderr)
+                
+        except Exception as e:
+            print(f"❌ Error in observer update: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
     
     def _process_card(self, card):
         """Process a card in a separate thread"""
@@ -275,31 +333,50 @@ def main() -> int:
     """Main function - uses observer pattern for card monitoring"""
     global _card_monitor
     
+    print("🚀 NFC Reader starting up...", file=sys.stderr)
+    
     # Setup signal handlers for proper cleanup
     setup_signal_handlers()
     
-    print("NFC Reader started - waiting for cards...", file=sys.stderr)
+    # Check PC/SC system first
+    if not check_pcsc_system():
+        print("❌ PC/SC system check failed - cannot continue", file=sys.stderr)
+        return 1
+    
+    print("📡 NFC Reader started - waiting for cards...", file=sys.stderr)
     print("Press Ctrl+C to stop", file=sys.stderr)
     
     observer = None
     try:
         # Create card observer and monitor
+        print("🔍 Creating CardObserver...", file=sys.stderr)
         observer = NFCCardObserver()
+        
+        print("🔍 Creating CardMonitor...", file=sys.stderr)
         _card_monitor = CardMonitor()
+        
+        print("🔍 Adding observer to monitor...", file=sys.stderr)
         _card_monitor.addObserver(observer)
         
-        print("Card monitoring started", file=sys.stderr)
+        print("✅ Card monitoring started - place a card on the reader", file=sys.stderr)
+        print("🔍 Monitoring thread active, main thread will sleep", file=sys.stderr)
         
-        # Keep the main thread alive
+        # Keep the main thread alive and periodically show we're still running
+        loop_count = 0
         while True:
-            time.sleep(1)
+            time.sleep(5)  # Check every 5 seconds
+            loop_count += 1
+            if loop_count % 12 == 0:  # Every minute
+                print(f"🔍 Still monitoring... ({loop_count * 5}s elapsed)", file=sys.stderr)
             
     except KeyboardInterrupt:
         cards_count = observer.cards_processed if observer else 0
-        print(f"\nShutting down... Processed {cards_count} cards.", file=sys.stderr)
+        print(f"\n🛑 Shutting down... Processed {cards_count} cards.", file=sys.stderr)
         return 0
     except Exception as e:
-        print(f"Unexpected error in main loop: {e}", file=sys.stderr)
+        print(f"❌ Unexpected error in main loop: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         return 1
 
 
