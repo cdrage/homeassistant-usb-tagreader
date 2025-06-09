@@ -8,6 +8,7 @@ import time
 import threading
 import requests
 import logging
+import os
 from typing import Optional
 from smartcard.CardConnection import CardConnection
 from smartcard.CardMonitoring import CardMonitor, CardObserver
@@ -18,7 +19,7 @@ from smartcard.System import readers
 from ndef_decoder import NDEFDecoder
 
 HA_TAG_PREFIX = "https://www.home-assistant.io/tag/"
-WEBHOOK_URL = "https://ha.apps.lasath.com/api/webhook/jukebox-play-qailegvCNUt_rXElJM2AYwW5"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # Configure logging for debugging
 logging.basicConfig(
@@ -34,6 +35,10 @@ _card_monitor: Optional[CardMonitor] = None
 
 def send_ha_webhook(tag_id: str) -> bool:
     """Send Home Assistant tag ID to webhook endpoint"""
+    if not WEBHOOK_URL:
+        print(f"⚠️  WEBHOOK_URL not configured, skipping webhook for tag: {tag_id}", file=sys.stderr)
+        return False
+        
     try:
         data = {"tag_id": tag_id}
         response = requests.post(WEBHOOK_URL, data=data, timeout=10)
