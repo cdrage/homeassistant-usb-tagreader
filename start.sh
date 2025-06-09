@@ -17,10 +17,6 @@ fi
 
 echo "PCSCD started successfully"
 
-# List available readers for debugging
-echo "Available PC/SC readers:"
-timeout 5 pcsc_scan -n 2>/dev/null || echo "No readers found or pcsc_scan not available"
-
 # Switch to non-root user and run the Python application
 echo "Starting NFC Reader application..."
 exec su -c "cd /app && python nfc_reader.py" nfcuser
