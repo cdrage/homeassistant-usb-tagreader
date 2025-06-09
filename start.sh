@@ -20,3 +20,6 @@ echo "PCSCD started successfully"
 # Switch to non-root user and run the Python application
 echo "Starting NFC Reader application..."
 exec su -c "cd /app && python nfc_reader.py" nfcuser
+
+# Send SIGTERM to stop PCSCD gracefully on exit
+trap "pkill -SIGTERM pcscd" EXIT

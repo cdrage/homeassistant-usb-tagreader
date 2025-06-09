@@ -21,7 +21,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code and startup script
-COPY nfc_reader.py .
+COPY *.py .
 COPY start.sh .
 RUN chmod +x start.sh
 
