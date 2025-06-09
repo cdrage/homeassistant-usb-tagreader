@@ -4,21 +4,175 @@
 import sys
 import signal
 import atexit
+import time
+import threading
+import requests
 from typing import Optional
-from smartcard.CardRequest import CardRequest
-from smartcard.CardType import AnyCardType
 from smartcard.CardConnection import CardConnection
-import smartcard.scard
+from smartcard.CardMonitoring import CardMonitor, CardObserver
+from smartcard.util import toHexString
 
 from ndef_decoder import NDEFDecoder
 
+HA_TAG_PREFIX = "https://www.home-assistant.io/tag/"
+WEBHOOK_URL = "https://ha.apps.lasath.com/api/webhook/jukebox-play-qailegvCNUt_rXElJM2AYwW5"
+
 # Global variables for resource cleanup
 _connection: Optional[CardConnection] = None
+_card_monitor: Optional[CardMonitor] = None
+
+
+def send_ha_webhook(tag_id: str) -> bool:
+    """Send Home Assistant tag ID to webhook endpoint"""
+    try:
+        data = {"tag_id": tag_id}
+        response = requests.post(WEBHOOK_URL, data=data, timeout=10)
+        
+        if response.status_code == 200:
+            print(f"✅ Webhook sent successfully for tag: {tag_id}", file=sys.stderr)
+            return True
+        else:
+            print(f"❌ Webhook failed with status {response.status_code} for tag: {tag_id}", file=sys.stderr)
+            return False
+            
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Webhook request failed for tag {tag_id}: {e}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"❌ Unexpected error sending webhook for tag {tag_id}: {e}", file=sys.stderr)
+        return False
+
+
+class NFCCardObserver(CardObserver):
+    """Observer for NFC card insertion and removal events"""
+    
+    def __init__(self):
+        self.cards_processed = 0
+        self.processing_lock = threading.Lock()
+        
+    def update(self, observable, handlers):
+        """Called when card events occur"""
+        (addedcards, removedcards) = handlers
+        
+        # Handle card insertions
+        for card in addedcards:
+            print(f"Card inserted: {toHexString(card.atr)}", file=sys.stderr)
+            threading.Thread(target=self._process_card, args=(card,), daemon=True).start()
+        
+        # Handle card removals
+        for card in removedcards:
+            print(f"Card removed: {toHexString(card.atr)}", file=sys.stderr)
+    
+    def _process_card(self, card):
+        """Process a card in a separate thread"""
+        global _connection
+        
+        with self.processing_lock:
+            try:
+                # Connect to the card
+                connection = card.createConnection()
+                if not isinstance(connection, CardConnection):
+                    print("Error: Card connection is not valid", file=sys.stderr)
+                    return
+
+                _connection = connection
+                _connection.connect()
+                
+                print(f"Connected to card", file=sys.stderr)
+                
+                # Read NDEF data
+                reader = T2NDEFReader()
+                data, error = reader.read_ndef(_connection)
+                
+                if error:
+                    print(f"Error reading NDEF: {error}", file=sys.stderr)
+                    return
+                
+                if data:
+                    # Output hex representation to stderr for debugging
+                    print(f"Raw NDEF data ({len(data)} bytes): {data.hex()}", file=sys.stderr)
+                    
+                    decoder = NDEFDecoder(data)
+                    records = decoder.decode_records()
+                    
+                    print("=== NDEF Records ===", file=sys.stderr)
+                    for i, record in enumerate(records):
+                        print(f"Record {i + 1}:", file=sys.stderr)
+                        print(f"  TNF: {record.tnf} ({record.tnf_name})", file=sys.stderr)
+                        print(f"  Type: {record.type_str} (hex: {record.record_type.hex()})", file=sys.stderr)
+                        if record.id_str:
+                            print(f"  ID: {record.id_str}", file=sys.stderr)
+                        print(f"  Payload length: {len(record.payload)} bytes", file=sys.stderr)
+                        print(f"  Payload (hex): {record.payload.hex()}", file=sys.stderr)
+                        print(f"  Payload (string): {repr(record.payload_str)}", file=sys.stderr)
+                        
+                        # Special handling for URI records
+                        if record.is_uri_record:
+                            uri = record.get_decoded_uri()
+                            print(f"  Decoded URI: {uri}", file=sys.stderr)
+
+                            # Check if it's a Home Assistant tag
+                            if uri and uri.startswith(HA_TAG_PREFIX):
+                                tag_id = uri[len(HA_TAG_PREFIX):]
+                                print(f"  Home Assistant Tag ID: {tag_id}", file=sys.stderr)
+                                
+                                # Send webhook request in background thread
+                                webhook_thread = threading.Thread(
+                                    target=send_ha_webhook, 
+                                    args=(tag_id,), 
+                                    daemon=True
+                                )
+                                webhook_thread.start()
+
+                        # Special handling for Android Application Record (AAR)
+                        elif record.is_android_app_record:
+                            package_name = record.get_android_package_name()
+                            print(f"  Android Package: {package_name}", file=sys.stderr)
+                        print(f"  Flags: MB={record.message_begin}, ME={record.last_record}, "
+                              f"CF={record.chunked}, SR={record.short_record}, IL={record.has_id}", file=sys.stderr)
+                        print(file=sys.stderr)
+                    
+                    # Output raw binary data to stdout for piping
+                    sys.stdout.buffer.write(data)
+                    sys.stdout.buffer.flush()
+                    
+                    self.cards_processed += 1
+                    print(f"--- Card read completed --- (Total: {self.cards_processed})", file=sys.stderr)
+                else:
+                    print("No NDEF data found on card", file=sys.stderr)
+                    
+            except Exception as e:
+                print(f"Error processing card: {e}", file=sys.stderr)
+            
+            finally:
+                # Always disconnect the card
+                if _connection:
+                    try:
+                        _connection.disconnect()
+                        print("Card processing finished", file=sys.stderr)
+                    except Exception as e:
+                        print(f"Warning: Error disconnecting card: {e}", file=sys.stderr)
+                    finally:
+                        _connection = None
 
 
 def cleanup_resources() -> None:
     """Cleanup function to be called on exit"""
-    global _connection
+    global _connection, _card_monitor
+    
+    # Stop card monitoring
+    if _card_monitor:
+        try:
+            # Remove all observers and stop monitoring
+            for observer in _card_monitor.observers[:]:  # Copy list to avoid modification during iteration
+                _card_monitor.deleteObserver(observer)
+            print("Card monitor stopped.", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: Error stopping card monitor: {e}", file=sys.stderr)
+        finally:
+            _card_monitor = None
+    
+    # Disconnect any active card connection
     if _connection:
         try:
             _connection.disconnect()
@@ -31,11 +185,9 @@ def cleanup_resources() -> None:
 
 def signal_handler(signum: int, frame) -> None:
     """Handle termination signals"""
-    signal_names = {
-        signal.SIGTERM: "SIGTERM",
-        signal.SIGINT: "SIGINT"
-    }
-    signal_name = signal_names.get(signum, f"signal {signum}")
+    signal_name = "SIGTERM" if signum == signal.SIGTERM else \
+                  "SIGINT" if signum == signal.SIGINT else \
+                  f"signal {signum}"
     print(f"\nReceived {signal_name}, cleaning up...", file=sys.stderr)
     cleanup_resources()
     sys.exit(128 + signum)
@@ -120,82 +272,34 @@ class T2NDEFReader:
 
 
 def main() -> int:
-    """Main function"""
-    global _connection
+    """Main function - uses observer pattern for card monitoring"""
+    global _card_monitor
     
     # Setup signal handlers for proper cleanup
     setup_signal_handlers()
     
+    print("NFC Reader started - waiting for cards...", file=sys.stderr)
+    print("Press Ctrl+C to stop", file=sys.stderr)
+    
+    observer = None
     try:
-        # Wait for a card (wait indefinitely)
-        cardrequest = CardRequest(
-            cardType=AnyCardType(), timeout=smartcard.scard.INFINITE
-        )
-        cardservice = cardrequest.waitforcard()
-
-        if not cardservice:
-            print("No card found", file=sys.stderr)
-            return 1
-
-        # Connect to the card and store globally for cleanup
-        _connection = cardservice.connection
-        if _connection is None:
-            print("Failed to get card connection", file=sys.stderr)
-            return 1
-        _connection.connect()
-
-        print(f"Connected to card: {cardservice.cardname}", file=sys.stderr)
-
-        # Read NDEF data
-        reader = T2NDEFReader()
-        data, error = reader.read_ndef(_connection)
-
-        if error:
-            print(f"Error: {error}", file=sys.stderr)
-            return 1
-
-        if data:
-            # Output hex representation to stderr for debugging
-            print(f"Raw NDEF data ({len(data)} bytes): {data.hex()}", file=sys.stderr)
-
-            decoder = NDEFDecoder(data)
-            records = decoder.decode_records()
-
-            print("=== NDEF Records ===", file=sys.stderr)
-            for i, record in enumerate(records):
-                print(f"Record {i + 1}:", file=sys.stderr)
-                print(f"  TNF: {record.tnf} ({record.tnf_name})", file=sys.stderr)
-                print(f"  Type: {record.type_str} (hex: {record.record_type.hex()})", file=sys.stderr)
-                if record.id_str:
-                    print(f"  ID: {record.id_str}", file=sys.stderr)
-                print(f"  Payload length: {len(record.payload)} bytes", file=sys.stderr)
-                print(f"  Payload (hex): {record.payload.hex()}", file=sys.stderr)
-                print(f"  Payload (string): {repr(record.payload_str)}", file=sys.stderr)
-
-                # Special handling for URI records
-                if record.is_uri_record:
-                    uri = record.get_decoded_uri()
-                    print(f"  Decoded URI: {uri}", file=sys.stderr)
-                # Special handling for Android Application Record (AAR)
-                elif record.is_android_app_record:
-                    package_name = record.get_android_package_name()
-                    print(f"  Android Package: {package_name}", file=sys.stderr)
-                print(f"  Flags: MB={record.message_begin}, ME={record.last_record}, "
-                      f"CF={record.chunked}, SR={record.short_record}, IL={record.has_id}", file=sys.stderr)
-                print(file=sys.stderr)
-
-            # Output raw binary data to stdout for piping
-            sys.stdout.buffer.write(data)
+        # Create card observer and monitor
+        observer = NFCCardObserver()
+        _card_monitor = CardMonitor()
+        _card_monitor.addObserver(observer)
+        
+        print("Card monitoring started", file=sys.stderr)
+        
+        # Keep the main thread alive
+        while True:
+            time.sleep(1)
             
-            # Clean disconnect (will also be called by atexit)
-            cleanup_resources()
-            return 0
-        else:
-            print("No NDEF data found", file=sys.stderr)
-            return 1
-
+    except KeyboardInterrupt:
+        cards_count = observer.cards_processed if observer else 0
+        print(f"\nShutting down... Processed {cards_count} cards.", file=sys.stderr)
+        return 0
     except Exception as e:
-        print(f"Unexpected error: {e}", file=sys.stderr)
+        print(f"Unexpected error in main loop: {e}", file=sys.stderr)
         return 1
 
 
