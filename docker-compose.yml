@@ -4,11 +4,8 @@ services:
   nfc-reader:
     build: .
     container_name: nfc-reader
-    privileged: true  # Required for USB device access
-    devices:
-      - /dev/bus/usb:/dev/bus/usb  # Mount USB devices
     volumes:
-      - /dev:/dev  # Mount device directory
+      - /run/pcscd:/run/pcscd  # Mount PCSC socket from host
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1  # Ensure Python output is not buffered

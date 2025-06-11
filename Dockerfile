@@ -1,10 +1,10 @@
 ARG PYTHON_VARIANT=slim
 FROM python:3.11${PYTHON_VARIANT:+-$PYTHON_VARIANT}
 
-# Install system dependencies for PCSC
+# Install system dependencies for PCSC (client libraries only)
 RUN apt-get update && apt-get install -y \
     libpcsclite-dev \
-    pcscd \
+    libpcsclite1 \
     pcsc-tools \
     python3-pyscard \
     libusb-1.0-0-dev \
@@ -26,13 +26,12 @@ COPY *.py .
 COPY start.sh .
 RUN chmod +x start.sh
 
-# Create a non-root user and add to dialout group for USB access
+# Create a non-root user for running the application
 RUN useradd -m -u 1000 nfcuser && \
-    usermod -a -G dialout nfcuser && \
     chown -R nfcuser:nfcuser /app
 
-# Note: We need to run as root for PCSCD, then switch to nfcuser for the app
-USER root
+# Switch to non-root user
+USER nfcuser
 
 # Run the startup script
 CMD ["./start.sh"]
