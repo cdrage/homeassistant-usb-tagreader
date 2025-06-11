@@ -1,21 +1,31 @@
 #!/bin/bash
 
 # Startup script for NFC Reader connecting to host PCSCD
-echo "Connecting to host PCSCD daemon..."
+
+# Function to log with timestamp
+log_info() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] $1"
+}
+
+log_error() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $1" >&2
+}
+
+log_info "Connecting to host PCSCD daemon..."
 
 # Check if we can connect to PCSCD socket
 if [ ! -S /run/pcscd/pcscd.comm ]; then
-    echo "ERROR: PCSCD socket not found. Make sure PCSCD is running on the host and socket is mounted."
-    echo "You may need to start PCSCD on the host with: sudo systemctl start pcscd"
+    log_error "PCSCD socket not found. Make sure PCSCD is running on the host and socket is mounted."
+    log_error "You may need to start PCSCD on the host with: sudo systemctl start pcscd"
     sleep 5
     exit 1
 fi
 
-echo "Starting NFC Reader application..."
+log_info "Starting NFC Reader application..."
 cd /app 
 python nfc_reader.py
 
 # Wait a while to avoid docker restarting the container immediately
-echo "NFC Reader application exited, probably due to an error."
-echo "Waiting for 65 seconds before exiting..."
+log_error "NFC Reader application exited, probably due to an error."
+log_info "Waiting for 65 seconds before exiting..."
 sleep 65

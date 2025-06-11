@@ -21,12 +21,14 @@ from ndef_decoder import NDEFDecoder
 HA_TAG_PREFIX = "https://www.home-assistant.io/tag/"
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-# Configure logging for debugging
+# Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     stream=sys.stderr
 )
+
+logger = logging.getLogger(__name__)
 
 # Global variables for resource cleanup
 _connection: Optional[CardConnection] = None
@@ -36,7 +38,7 @@ _card_monitor: Optional[CardMonitor] = None
 def send_ha_webhook(tag_id: str) -> bool:
     """Send Home Assistant tag ID to webhook endpoint"""
     if not WEBHOOK_URL:
-        print(f"⚠️  WEBHOOK_URL not configured, skipping webhook for tag: {tag_id}", file=sys.stderr)
+        logger.warning("WEBHOOK_URL not configured, skipping webhook for tag: %s", tag_id)
         return False
         
     try:
@@ -44,54 +46,53 @@ def send_ha_webhook(tag_id: str) -> bool:
         response = requests.post(WEBHOOK_URL, data=data, timeout=10)
         
         if response.status_code == 200:
-            print(f"✅ Webhook sent successfully for tag: {tag_id}", file=sys.stderr)
+            logger.info("Webhook sent successfully for tag: %s", tag_id)
             return True
         else:
-            print(f"❌ Webhook failed with status {response.status_code} for tag: {tag_id}", file=sys.stderr)
+            logger.error("Webhook failed with status %d for tag: %s", response.status_code, tag_id)
             return False
             
     except requests.exceptions.RequestException as e:
-        print(f"❌ Webhook request failed for tag {tag_id}: {e}", file=sys.stderr)
+        logger.error("Webhook request failed for tag %s: %s", tag_id, e)
         return False
     except Exception as e:
-        print(f"❌ Unexpected error sending webhook for tag {tag_id}: {e}", file=sys.stderr)
+        logger.error("Unexpected error sending webhook for tag %s: %s", tag_id, e)
         return False
 
 
 def check_pcsc_system() -> bool:
     """Check PC/SC system status and available readers"""
     try:
-        print("🔍 Checking PC/SC system status...", file=sys.stderr)
+        logger.info("Checking PC/SC system status...")
         
         # Get available readers
         available_readers = readers()
-        print(f"🔍 Available readers: {len(available_readers)}", file=sys.stderr)
+        logger.info("Available readers: %d", len(available_readers))
         
         for i, reader in enumerate(available_readers):
-            print(f"  Reader {i}: {reader}", file=sys.stderr)
+            logger.info("Reader %d: %s", i, reader)
             
             try:
                 # Try to connect to see if there's a card
                 connection = reader.createConnection()
                 connection.connect()
-                print(f"  ✅ Reader {i} has a card present", file=sys.stderr)
-                print(f"  ATR: {toHexString(connection.getATR())}", file=sys.stderr)
+                logger.info("Reader %d has a card present", i)
+                logger.debug("ATR: %s", toHexString(connection.getATR()))
                 connection.disconnect()
             except NoCardException:
-                print(f"  ℹ️  Reader {i} has no card", file=sys.stderr)
+                logger.info("Reader %d has no card", i)
             except Exception as e:
-                print(f"  ⚠️  Reader {i} error: {e}", file=sys.stderr)
+                logger.warning("Reader %d error: %s", i, e)
         
         if not available_readers:
-            print("❌ No PC/SC readers found!", file=sys.stderr)
+            logger.error("No PC/SC readers found!")
             return False
             
         return True
         
     except Exception as e:
-        print(f"❌ PC/SC system check failed: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
+        logger.error("PC/SC system check failed: %s", e)
+        logger.debug("Exception details:", exc_info=True)
         return False
 
 
@@ -101,30 +102,29 @@ class NFCCardObserver(CardObserver):
     def __init__(self):
         self.cards_processed = 0
         self.processing_lock = threading.Lock()
-        print("🔍 NFCCardObserver initialized", file=sys.stderr)
+        logger.info("NFCCardObserver initialized")
         
     def update(self, observable, handlers):
         """Called when card events occur"""
-        print(f"🔍 Observer update called with {len(handlers) if handlers else 0} handlers", file=sys.stderr)
+        logger.debug("Observer update called with %d handlers", len(handlers) if handlers else 0)
         
         try:
             (addedcards, removedcards) = handlers
-            print(f"🔍 Added cards: {len(addedcards)}, Removed cards: {len(removedcards)}", file=sys.stderr)
+            logger.debug("Added cards: %d, Removed cards: %d", len(addedcards), len(removedcards))
             
             # Handle card insertions
             for card in addedcards:
-                print(f"📟 Card inserted: {toHexString(card.atr)}", file=sys.stderr)
-                print(f"🔍 Starting thread to process card", file=sys.stderr)
+                logger.info("Card inserted: %s", toHexString(card.atr))
+                logger.debug("Starting thread to process card")
                 threading.Thread(target=self._process_card, args=(card,), daemon=True).start()
             
             # Handle card removals
             for card in removedcards:
-                print(f"📤 Card removed: {toHexString(card.atr)}", file=sys.stderr)
+                logger.info("Card removed: %s", toHexString(card.atr))
                 
         except Exception as e:
-            print(f"❌ Error in observer update: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc(file=sys.stderr)
+            logger.error("Error in observer update: %s", e)
+            logger.debug("Exception details:", exc_info=True)
     
     def _process_card(self, card):
         """Process a card in a separate thread"""
@@ -135,49 +135,49 @@ class NFCCardObserver(CardObserver):
                 # Connect to the card
                 connection = card.createConnection()
                 if not isinstance(connection, CardConnection):
-                    print("Error: Card connection is not valid", file=sys.stderr)
+                    logger.error("Card connection is not valid")
                     return
 
                 _connection = connection
                 _connection.connect()
                 
-                print(f"Connected to card", file=sys.stderr)
+                logger.info("Connected to card")
                 
                 # Read NDEF data
                 reader = T2NDEFReader()
                 data, error = reader.read_ndef(_connection)
                 
                 if error:
-                    print(f"Error reading NDEF: {error}", file=sys.stderr)
+                    logger.error("Error reading NDEF: %s", error)
                     return
                 
                 if data:
-                    # Output hex representation to stderr for debugging
-                    print(f"Raw NDEF data ({len(data)} bytes): {data.hex()}", file=sys.stderr)
+                    # Output hex representation for debugging
+                    logger.debug("Raw NDEF data (%d bytes): %s", len(data), data.hex())
                     
                     decoder = NDEFDecoder(data)
                     records = decoder.decode_records()
                     
-                    print("=== NDEF Records ===", file=sys.stderr)
+                    logger.info("=== NDEF Records ===")
                     for i, record in enumerate(records):
-                        print(f"Record {i + 1}:", file=sys.stderr)
-                        print(f"  TNF: {record.tnf} ({record.tnf_name})", file=sys.stderr)
-                        print(f"  Type: {record.type_str} (hex: {record.record_type.hex()})", file=sys.stderr)
+                        logger.info("Record %d:", i + 1)
+                        logger.info("  TNF: %d (%s)", record.tnf, record.tnf_name)
+                        logger.info("  Type: %s (hex: %s)", record.type_str, record.record_type.hex())
                         if record.id_str:
-                            print(f"  ID: {record.id_str}", file=sys.stderr)
-                        print(f"  Payload length: {len(record.payload)} bytes", file=sys.stderr)
-                        print(f"  Payload (hex): {record.payload.hex()}", file=sys.stderr)
-                        print(f"  Payload (string): {repr(record.payload_str)}", file=sys.stderr)
+                            logger.info("  ID: %s", record.id_str)
+                        logger.info("  Payload length: %d bytes", len(record.payload))
+                        logger.debug("  Payload (hex): %s", record.payload.hex())
+                        logger.debug("  Payload (string): %r", record.payload_str)
                         
                         # Special handling for URI records
                         if record.is_uri_record:
                             uri = record.get_decoded_uri()
-                            print(f"  Decoded URI: {uri}", file=sys.stderr)
+                            logger.info("  Decoded URI: %s", uri)
 
                             # Check if it's a Home Assistant tag
                             if uri and uri.startswith(HA_TAG_PREFIX):
                                 tag_id = uri[len(HA_TAG_PREFIX):]
-                                print(f"  Home Assistant Tag ID: {tag_id}", file=sys.stderr)
+                                logger.info("  Home Assistant Tag ID: %s", tag_id)
                                 
                                 # Send webhook request in background thread
                                 webhook_thread = threading.Thread(
@@ -190,31 +190,32 @@ class NFCCardObserver(CardObserver):
                         # Special handling for Android Application Record (AAR)
                         elif record.is_android_app_record:
                             package_name = record.get_android_package_name()
-                            print(f"  Android Package: {package_name}", file=sys.stderr)
-                        print(f"  Flags: MB={record.message_begin}, ME={record.last_record}, "
-                              f"CF={record.chunked}, SR={record.short_record}, IL={record.has_id}", file=sys.stderr)
-                        print(file=sys.stderr)
+                            logger.info("  Android Package: %s", package_name)
+                        
+                        logger.debug("  Flags: MB=%s, ME=%s, CF=%s, SR=%s, IL=%s", 
+                                   record.message_begin, record.last_record,
+                                   record.chunked, record.short_record, record.has_id)
                     
                     # Output raw binary data to stdout for piping
                     sys.stdout.buffer.write(data)
                     sys.stdout.buffer.flush()
                     
                     self.cards_processed += 1
-                    print(f"--- Card read completed --- (Total: {self.cards_processed})", file=sys.stderr)
+                    logger.info("--- Card read completed --- (Total: %d)", self.cards_processed)
                 else:
-                    print("No NDEF data found on card", file=sys.stderr)
+                    logger.info("No NDEF data found on card")
                     
             except Exception as e:
-                print(f"Error processing card: {e}", file=sys.stderr)
+                logger.error("Error processing card: %s", e)
             
             finally:
                 # Always disconnect the card
                 if _connection:
                     try:
                         _connection.disconnect()
-                        print("Card processing finished", file=sys.stderr)
+                        logger.debug("Card processing finished")
                     except Exception as e:
-                        print(f"Warning: Error disconnecting card: {e}", file=sys.stderr)
+                        logger.warning("Error disconnecting card: %s", e)
                     finally:
                         _connection = None
 
@@ -229,9 +230,9 @@ def cleanup_resources() -> None:
             # Remove all observers and stop monitoring
             for observer in _card_monitor.observers[:]:  # Copy list to avoid modification during iteration
                 _card_monitor.deleteObserver(observer)
-            print("Card monitor stopped.", file=sys.stderr)
+            logger.info("Card monitor stopped")
         except Exception as e:
-            print(f"Warning: Error stopping card monitor: {e}", file=sys.stderr)
+            logger.warning("Error stopping card monitor: %s", e)
         finally:
             _card_monitor = None
     
@@ -239,9 +240,9 @@ def cleanup_resources() -> None:
     if _connection:
         try:
             _connection.disconnect()
-            print("Card connection closed.", file=sys.stderr)
+            logger.info("Card connection closed")
         except Exception as e:
-            print(f"Warning: Error closing card connection: {e}", file=sys.stderr)
+            logger.warning("Error closing card connection: %s", e)
         finally:
             _connection = None
 
@@ -251,7 +252,7 @@ def signal_handler(signum: int, frame) -> None:
     signal_name = "SIGTERM" if signum == signal.SIGTERM else \
                   "SIGINT" if signum == signal.SIGINT else \
                   f"signal {signum}"
-    print(f"\nReceived {signal_name}, cleaning up...", file=sys.stderr)
+    logger.info("Received %s, cleaning up...", signal_name)
     cleanup_resources()
     sys.exit(128 + signum)
 
@@ -338,33 +339,33 @@ def main() -> int:
     """Main function - uses observer pattern for card monitoring"""
     global _card_monitor
     
-    print("🚀 NFC Reader starting up...", file=sys.stderr)
+    logger.info("NFC Reader starting up...")
     
     # Setup signal handlers for proper cleanup
     setup_signal_handlers()
     
     # Check PC/SC system first
     if not check_pcsc_system():
-        print("❌ PC/SC system check failed - cannot continue", file=sys.stderr)
+        logger.error("PC/SC system check failed - cannot continue")
         return 1
     
-    print("📡 NFC Reader started - waiting for cards...", file=sys.stderr)
-    print("Press Ctrl+C to stop", file=sys.stderr)
+    logger.info("NFC Reader started - waiting for cards...")
+    logger.info("Press Ctrl+C to stop")
     
     observer = None
     try:
         # Create card observer and monitor
-        print("🔍 Creating CardObserver...", file=sys.stderr)
+        logger.debug("Creating CardObserver...")
         observer = NFCCardObserver()
         
-        print("🔍 Creating CardMonitor...", file=sys.stderr)
+        logger.debug("Creating CardMonitor...")
         _card_monitor = CardMonitor()
         
-        print("🔍 Adding observer to monitor...", file=sys.stderr)
+        logger.debug("Adding observer to monitor...")
         _card_monitor.addObserver(observer)
         
-        print("✅ Card monitoring started - place a card on the reader", file=sys.stderr)
-        print("🔍 Monitoring thread active, main thread will sleep", file=sys.stderr)
+        logger.info("Card monitoring started - place a card on the reader")
+        logger.debug("Monitoring thread active, main thread will sleep")
         
         # Keep the main thread alive and periodically show we're still running
         loop_count = 0
@@ -372,16 +373,15 @@ def main() -> int:
             time.sleep(5)  # Check every 5 seconds
             loop_count += 1
             if loop_count % 12 == 0:  # Every minute
-                print(f"🔍 Still monitoring... ({loop_count * 5}s elapsed)", file=sys.stderr)
+                logger.debug("Still monitoring... (%ds elapsed)", loop_count * 5)
             
     except KeyboardInterrupt:
         cards_count = observer.cards_processed if observer else 0
-        print(f"\n🛑 Shutting down... Processed {cards_count} cards.", file=sys.stderr)
+        logger.info("Shutting down... Processed %d cards.", cards_count)
         return 0
     except Exception as e:
-        print(f"❌ Unexpected error in main loop: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
+        logger.error("Unexpected error in main loop: %s", e)
+        logger.debug("Exception details:", exc_info=True)
         return 1
 
 

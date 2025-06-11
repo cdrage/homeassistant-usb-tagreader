@@ -1,7 +1,17 @@
 #!/usr/bin/python3
 """Test NDEF decoding with sample Home Assistant data"""
 
+import logging
+import os
 from ndef_decoder import analyze_home_assistant_data
+
+# Configure logging for the test
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+logger = logging.getLogger(__name__)
 
 # Based on the output we saw, let's try to reconstruct what the NDEF data might look like
 # The string we saw suggests it contains:
@@ -15,37 +25,33 @@ def test_with_sample_data():
     # Let's create a sample NDEF message with URI + AAR records
     # This is what Home Assistant companion app typically creates
     
-    print("=== NDEF Format Analysis ===")
-    print("The Home Assistant Companion app typically creates NDEF messages with:")
-    print("1. A URI record pointing to home-assistant.io/tag/...")
-    print("2. Android Application Record (AAR) for the companion app")
-    print("3. Sometimes additional AAR for backup/minimal app")
-    print()
+    logger.info("=== NDEF Format Analysis ===")
+    logger.info("The Home Assistant Companion app typically creates NDEF messages with:")
+    logger.info("1. A URI record pointing to home-assistant.io/tag/...")
+    logger.info("2. Android Application Record (AAR) for the companion app")
+    logger.info("3. Sometimes additional AAR for backup/minimal app")
     
-    print("NDEF Record Structure (per NFC Forum specification):")
-    print("- Header byte: TNF (Type Name Format) + flags")
-    print("- Type Length: 1 byte")
-    print("- Payload Length: 1 or 4 bytes (depending on Short Record flag)")
-    print("- ID Length: 1 byte (if ID present flag is set)")
-    print("- Type: variable length")
-    print("- ID: variable length (if present)")
-    print("- Payload: variable length")
-    print()
+    logger.info("NDEF Record Structure (per NFC Forum specification):")
+    logger.info("- Header byte: TNF (Type Name Format) + flags")
+    logger.info("- Type Length: 1 byte")
+    logger.info("- Payload Length: 1 or 4 bytes (depending on Short Record flag)")
+    logger.info("- ID Length: 1 byte (if ID present flag is set)")
+    logger.info("- Type: variable length")
+    logger.info("- ID: variable length (if present)")
+    logger.info("- Payload: variable length")
     
-    print("Common TNF values:")
-    print("- 0x01: NFC Forum well-known type (like 'U' for URI)")
-    print("- 0x04: NFC Forum external type (like 'android.com:pkg' for AAR)")
-    print()
+    logger.info("Common TNF values:")
+    logger.info("- 0x01: NFC Forum well-known type (like 'U' for URI)")
+    logger.info("- 0x04: NFC Forum external type (like 'android.com:pkg' for AAR)")
     
-    print("Common record types:")
-    print("- 'U': URI record")
-    print("- 'android.com:pkg': Android Application Record")
-    print()
+    logger.info("Common record types:")
+    logger.info("- 'U': URI record")
+    logger.info("- 'android.com:pkg': Android Application Record")
     
-    print("To decode the actual data from your tag, run:")
-    print("./docker-build.sh && ./deploy.sh lasath@speakerpi.home.lasath.com --sync")
-    print("Then when you see the hex output, use:")
-    print("python ndef_decoder.py <hex_data>")
+    logger.info("To decode the actual data from your tag, run:")
+    logger.info("./docker-build.sh && ./deploy.sh lasath@speakerpi.home.lasath.com --sync")
+    logger.info("Then when you see the hex output, use:")
+    logger.info("python ndef_decoder.py <hex_data>")
 
 if __name__ == "__main__":
     test_with_sample_data()

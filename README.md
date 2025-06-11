@@ -1,10 +1,10 @@
 # NFC Tag Reader
 
-A Python application that uses libnfc to listen for NFC tags on USB NFC readers and print their contents.
+A Python application that uses PC/SC to listen for NFC tags on USB NFC readers and print their contents.
 
 ## Features
 
-- Automatically detects USB NFC readers
+- Automatically detects USB NFC readers via PC/SC
 - Reads and displays NFC tag information including:
   - Tag type and identifier
   - NDEF capacity and length
@@ -12,6 +12,7 @@ A Python application that uses libnfc to listen for NFC tags on USB NFC readers 
 - Comprehensive type hints throughout the codebase
 - Dockerized for easy deployment across different machines
 - Graceful shutdown handling
+- Home Assistant webhook integration
 
 ## Requirements
 
@@ -76,6 +77,13 @@ To run the container manually:
 ```bash
 docker run -v /run/pcscd:/run/pcscd nfc-reader
 ```
+
+## Home Assistant Integration
+
+The application can send webhook requests when Home Assistant NFC tags are detected:
+
+1. Set the `WEBHOOK_URL` environment variable to your Home Assistant webhook endpoint
+2. When a tag with a `home-assistant.io/tag/` URI is scanned, it will automatically send the tag ID to the webhook
 
 ## Troubleshooting
 

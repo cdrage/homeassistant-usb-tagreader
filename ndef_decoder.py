@@ -2,8 +2,13 @@
 """NDEF decoder for analyzing NFC tag data"""
 
 import sys
+import logging
+import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+
+# Configure logging for this module
+logger = logging.getLogger(__name__)
 
 @dataclass
 class NDEFRecord:
@@ -202,40 +207,45 @@ def decode_uri_payload(payload: bytes) -> str:
 
 def analyze_home_assistant_data(data: bytes) -> None:
     """Analyze Home Assistant specific NDEF data"""
-    print("=== Home Assistant NDEF Analysis ===")
-    print(f"Raw data: {data.hex()}")
-    print(f"Raw string: {repr(data)}")
-    print(f"Length: {len(data)} bytes")
-    print()
+    logger.info("=== Home Assistant NDEF Analysis ===")
+    logger.info("Raw data: %s", data.hex())
+    logger.debug("Raw string: %r", data)
+    logger.info("Length: %d bytes", len(data))
     
     decoder = NDEFDecoder(data)
     records = decoder.decode_records()
     
     for i, record in enumerate(records):
-        print(f"Record {i + 1}:")
-        print(f"  TNF: {record.tnf} ({record.tnf_name})")
-        print(f"  Type: {record.type_str} (hex: {record.record_type.hex()})")
+        logger.info("Record %d:", i + 1)
+        logger.info("  TNF: %d (%s)", record.tnf, record.tnf_name)
+        logger.info("  Type: %s (hex: %s)", record.type_str, record.record_type.hex())
         if record.id_str:
-            print(f"  ID: {record.id_str}")
-        print(f"  Payload length: {len(record.payload)} bytes")
-        print(f"  Payload (hex): {record.payload.hex()}")
-        print(f"  Payload (string): {repr(record.payload_str)}")
+            logger.info("  ID: %s", record.id_str)
+        logger.info("  Payload length: %d bytes", len(record.payload))
+        logger.debug("  Payload (hex): %s", record.payload.hex())
+        logger.debug("  Payload (string): %r", record.payload_str)
         
         # Special handling for URI records
         if record.is_uri_record:
             uri = record.get_decoded_uri()
-            print(f"  Decoded URI: {uri}")
+            logger.info("  Decoded URI: %s", uri)
         
         # Special handling for Android Application Record (AAR)
         elif record.is_android_app_record:
             package_name = record.get_android_package_name()
-            print(f"  Android Package: {package_name}")
+            logger.info("  Android Package: %s", package_name)
         
-        print(f"  Flags: MB={record.message_begin}, ME={record.last_record}, "
-              f"CF={record.chunked}, SR={record.short_record}, IL={record.has_id}")
-        print()
+        logger.debug("  Flags: MB=%s, ME=%s, CF=%s, SR=%s, IL=%s",
+                    record.message_begin, record.last_record,
+                    record.chunked, record.short_record, record.has_id)
 
 if __name__ == "__main__":
+    # Configure logging for standalone execution
+    logging.basicConfig(
+        level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
     # Example data from the Home Assistant tag we captured
     # This is the data we saw: "home-assistant.io/tag/library://artist/172"android.com:pkgio.homeassistant.companion.androidT*android.com:pkgio.homeassistant.companion.android.minimal"
     
@@ -246,8 +256,8 @@ if __name__ == "__main__":
         data: bytes = bytes.fromhex(hex_data)
     else:
         # Use the captured data - we need to get the actual raw bytes from the NFC reader
-        print("Usage: python ndef_decoder.py <hex_data>")
-        print("Please provide the raw NDEF data as hex")
+        logger.error("Usage: python ndef_decoder.py <hex_data>")
+        logger.error("Please provide the raw NDEF data as hex")
         sys.exit(1)
     
     analyze_home_assistant_data(data)
