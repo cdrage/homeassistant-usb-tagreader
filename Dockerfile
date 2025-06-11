@@ -1,4 +1,5 @@
-FROM python:3.11-slim
+ARG PYTHON_VARIANT=slim
+FROM python:3.11${PYTHON_VARIANT:+-$PYTHON_VARIANT}
 
 # Install system dependencies for PCSC
 RUN apt-get update && apt-get install -y \

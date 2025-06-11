@@ -3,7 +3,12 @@
 {
 	"name": "Python 3",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "mcr.microsoft.com/devcontainers/python:1-3.12-bullseye",
+	"build": {
+		"dockerfile": "../Dockerfile",
+		"args": {
+			"PYTHON_VARIANT": ""
+		}
+	},
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	"features": {
 		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
@@ -30,7 +35,7 @@
 		}
 	},
 	"mounts": [
-		"type=bind,source=/home/fernie/.config/claude,target=/home/vscode/.config/claude,consistency=cached",
-		"type=bind,source=/home/fernie/.config/claude-home,target=/home/vscode/.claude,consistency=cached"
+		"type=bind,source=/home/fernie/.config/claude,target=/home/vscode/.config/claude",
+		"type=bind,source=/home/fernie/.config/claude-home,target=/home/vscode/.claude"
 	]
 }
