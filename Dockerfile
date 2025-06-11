@@ -1,4 +1,5 @@
 ARG PYTHON_VARIANT=slim
+ARG DEV_MODE=false
 FROM python:3.11${PYTHON_VARIANT:+-$PYTHON_VARIANT}
 
 # Install system dependencies for PCSC (client libraries only)
@@ -11,8 +12,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     gcc \
     swig \
-    procps \
-    && rm -rf /var/lib/apt/lists/*
+    procps
 
 # Create app directory
 WORKDIR /app
@@ -29,6 +29,16 @@ RUN chmod +x start.sh
 # Create a non-root user for running the application
 RUN useradd -m -u 1000 nfcuser && \
     chown -R nfcuser:nfcuser /app
+
+# Conditionally install sudo for development only
+RUN if [ "$DEV_MODE" = "true" ]; then \
+        apt-get update && \
+        apt-get install -y sudo && \
+        echo "nfcuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/nfcuser; \
+    fi
+
+# Clean up package lists
+RUN rm -rf /var/lib/apt/lists/*
 
 # Switch to non-root user
 USER nfcuser
