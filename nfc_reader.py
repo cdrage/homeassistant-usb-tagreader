@@ -6,10 +6,10 @@ import signal
 import atexit
 import time
 import threading
-import httpx
 import logging
 import os
 from typing import Optional
+import httpx
 from smartcard.CardConnection import CardConnection
 from smartcard.CardMonitoring import CardMonitor, CardObserver
 from smartcard.util import toHexString
@@ -52,18 +52,18 @@ def send_ha_webhook(tag_id: str) -> bool:
         if response.status_code == 200:
             logger.info("Webhook sent successfully for tag: %s", tag_id)
             return True
-        else:
-            logger.error(
-                "Webhook failed with status %d for tag: %s",
-                response.status_code,
-                tag_id,
-            )
-            return False
+
+        logger.error(
+            "Webhook failed with status %d for tag: %s",
+            response.status_code,
+            tag_id,
+        )
+        return False
 
     except httpx.RequestError as e:
         logger.error("Webhook request failed for tag %s: %s", tag_id, e)
         return False
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Unexpected error sending webhook for tag %s: %s", tag_id, e)
         return False
 
@@ -89,7 +89,7 @@ def check_pcsc_system() -> bool:
                 connection.disconnect()
             except NoCardException:
                 logger.info("Reader %d has no card", i)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.warning("Reader %d error: %s", i, e)
 
         if not available_readers:
@@ -98,12 +98,14 @@ def check_pcsc_system() -> bool:
 
         return True
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("PC/SC system check failed: %s", e)
         logger.debug("Exception details:", exc_info=True)
         return False
 
 
+# Since this is an observer class, it doesn't need public methods
+# pylint: disable=too-few-public-methods
 class NFCCardObserver(CardObserver):
     """Observer for NFC card insertion and removal events"""
 
@@ -136,13 +138,13 @@ class NFCCardObserver(CardObserver):
             for card in removedcards:
                 logger.info("Card removed: %s", toHexString(card.atr))
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Error in observer update: %s", e)
             logger.debug("Exception details:", exc_info=True)
 
     def _process_card(self, card):
         """Process a card in a separate thread"""
-        global _connection
+        global _connection  # pylint: disable=global-statement
 
         with self.processing_lock:
             try:
@@ -228,7 +230,7 @@ class NFCCardObserver(CardObserver):
                 else:
                     logger.info("No NDEF data found on card")
 
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("Error processing card: %s", e)
 
             finally:
@@ -237,7 +239,7 @@ class NFCCardObserver(CardObserver):
                     try:
                         _connection.disconnect()
                         logger.debug("Card processing finished")
-                    except Exception as e:
+                    except Exception as e:  # pylint: disable=broad-exception-caught
                         logger.warning("Error disconnecting card: %s", e)
                     finally:
                         _connection = None
@@ -245,7 +247,7 @@ class NFCCardObserver(CardObserver):
 
 def cleanup_resources() -> None:
     """Cleanup function to be called on exit"""
-    global _connection, _card_monitor
+    global _connection, _card_monitor  # pylint: disable=global-statement
 
     # Stop card monitoring
     if _card_monitor:
@@ -256,7 +258,7 @@ def cleanup_resources() -> None:
             ]:  # Copy list to avoid modification during iteration
                 _card_monitor.deleteObserver(observer)
             logger.info("Card monitor stopped")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning("Error stopping card monitor: %s", e)
         finally:
             _card_monitor = None
@@ -266,13 +268,13 @@ def cleanup_resources() -> None:
         try:
             _connection.disconnect()
             logger.info("Card connection closed")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning("Error closing card connection: %s", e)
         finally:
             _connection = None
 
 
-def signal_handler(signum: int, frame) -> None:
+def signal_handler(signum: int, _frame) -> None:
     """Handle termination signals"""
     signal_name = (
         "SIGTERM"
@@ -296,7 +298,7 @@ def setup_signal_handlers() -> None:
 
 def main() -> int:
     """Main function - uses observer pattern for card monitoring"""
-    global _card_monitor
+    global _card_monitor  # pylint: disable=global-statement
 
     logger.info("NFC Reader starting up...")
 
@@ -338,11 +340,11 @@ def main() -> int:
         cards_count = observer.cards_processed if observer else 0
         logger.info("Shutting down... Processed %d cards.", cards_count)
         return 0
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Unexpected error in main loop: %s", e)
         logger.debug("Exception details:", exc_info=True)
         return 1
 
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())
