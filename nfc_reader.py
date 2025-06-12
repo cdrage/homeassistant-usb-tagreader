@@ -6,7 +6,7 @@ import signal
 import atexit
 import time
 import threading
-import requests
+import httpx
 import logging
 import os
 from typing import Optional
@@ -46,7 +46,8 @@ def send_ha_webhook(tag_id: str) -> bool:
 
     try:
         data = {"tag_id": tag_id}
-        response = requests.post(WEBHOOK_URL, data=data, timeout=10)
+        with httpx.Client() as client:
+            response = client.post(WEBHOOK_URL, data=data, timeout=10)
 
         if response.status_code == 200:
             logger.info("Webhook sent successfully for tag: %s", tag_id)
@@ -59,7 +60,7 @@ def send_ha_webhook(tag_id: str) -> bool:
             )
             return False
 
-    except requests.exceptions.RequestException as e:
+    except httpx.RequestError as e:
         logger.error("Webhook request failed for tag %s: %s", tag_id, e)
         return False
     except Exception as e:
