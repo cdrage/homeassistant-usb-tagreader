@@ -18,6 +18,7 @@ from smartcard.System import readers
 
 from ndef_decoder import NDEFDecoder
 from t2_ndef_reader import T2NDEFReader
+from mqtt_handler import MQTTHandler
 
 HA_TAG_PREFIX = "https://www.home-assistant.io/tag/"
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Global variables for resource cleanup
 _connection: Optional[CardConnection] = None
 _card_monitor: Optional[CardMonitor] = None
+_mqtt_handler: Optional[MQTTHandler] = None
 
 
 def send_ha_webhook(tag_id: str) -> bool:
@@ -137,6 +139,9 @@ class NFCCardObserver(CardObserver):
             # Handle card removals
             for card in removedcards:
                 logger.info("Card removed: %s", toHexString(card.atr))
+                # Publish MQTT state for card removal (no tag present)
+                if _mqtt_handler:
+                    _mqtt_handler.publish_tag_state(None)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Error in observer update: %s", e)
@@ -174,6 +179,8 @@ class NFCCardObserver(CardObserver):
                     decoder = NDEFDecoder(data)
                     records = decoder.decode_records()
 
+                    ha_tag_found = False  # Track if we found a Home Assistant tag
+
                     logger.info("=== NDEF Records ===")
                     for i, record in enumerate(records):
                         logger.info("Record %d:", i + 1)
@@ -198,6 +205,11 @@ class NFCCardObserver(CardObserver):
                             if uri and uri.startswith(HA_TAG_PREFIX):
                                 tag_id = uri[len(HA_TAG_PREFIX) :]
                                 logger.info("  Home Assistant Tag ID: %s", tag_id)
+                                ha_tag_found = True
+
+                                # Publish MQTT state for card presence
+                                if _mqtt_handler:
+                                    _mqtt_handler.publish_tag_state(tag_id)
 
                                 # Send webhook request in background thread
                                 webhook_thread = threading.Thread(
@@ -219,6 +231,13 @@ class NFCCardObserver(CardObserver):
                             record.has_id,
                         )
 
+                    # If no Home Assistant tag was found, publish generic tag presence
+                    if not ha_tag_found:
+                        # Use card ATR as a unique identifier for non-HA tags
+                        card_atr = toHexString(card.atr)
+                        if _mqtt_handler:
+                            _mqtt_handler.publish_tag_state(f"generic_{card_atr}")
+
                     # Output raw binary data to stdout for piping
                     sys.stdout.buffer.write(data)
                     sys.stdout.buffer.flush()
@@ -229,6 +248,10 @@ class NFCCardObserver(CardObserver):
                     )
                 else:
                     logger.info("No NDEF data found on card")
+                    # Still publish MQTT state for cards without NDEF data
+                    card_atr = toHexString(card.atr)
+                    if _mqtt_handler:
+                        _mqtt_handler.publish_tag_state(f"no_ndef_{card_atr}")
 
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("Error processing card: %s", e)
@@ -273,6 +296,10 @@ def cleanup_resources() -> None:
         finally:
             _connection = None
 
+    # Cleanup MQTT client
+    if _mqtt_handler:
+        _mqtt_handler.cleanup()
+
 
 def signal_handler(signum: int, _frame) -> None:
     """Handle termination signals"""
@@ -298,7 +325,7 @@ def setup_signal_handlers() -> None:
 
 def main() -> int:
     """Main function - uses observer pattern for card monitoring"""
-    global _card_monitor  # pylint: disable=global-statement
+    global _card_monitor, _mqtt_handler  # pylint: disable=global-statement
 
     logger.info("NFC Reader starting up...")
 
@@ -309,6 +336,10 @@ def main() -> int:
     if not check_pcsc_system():
         logger.error("PC/SC system check failed - cannot continue")
         return 1
+
+    # Setup MQTT (optional - system can work without it)
+    _mqtt_handler = MQTTHandler()
+    _mqtt_handler.setup()
 
     logger.info("NFC Reader started - waiting for cards...")
     logger.info("Press Ctrl+C to stop")
