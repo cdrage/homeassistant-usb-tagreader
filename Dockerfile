@@ -14,6 +14,13 @@ RUN apt-get update && apt-get install -y \
     swig \
     procps
 
+# Conditionally install sudo and vsmartcard for development only
+RUN if [ "$DEV_MODE" = "true" ]; then \
+        apt-get update && \
+        apt-get install -y sudo pcscd vsmartcard-vpcd vsmartcard-vpicc && \
+        echo "nfcuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/nfcuser; \
+    fi
+
 # Create app directory
 WORKDIR /app
 
@@ -27,15 +34,9 @@ COPY start.sh .
 RUN chmod +x start.sh
 
 # Create a non-root user for running the application
-RUN useradd -m -u 1000 nfcuser && \
+RUN useradd -m -u 1000 -s /bin/bash nfcuser && \
     chown -R nfcuser:nfcuser /app
 
-# Conditionally install sudo for development only
-RUN if [ "$DEV_MODE" = "true" ]; then \
-        apt-get update && \
-        apt-get install -y sudo && \
-        echo "nfcuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/nfcuser; \
-    fi
 
 # Clean up package lists
 RUN rm -rf /var/lib/apt/lists/*
