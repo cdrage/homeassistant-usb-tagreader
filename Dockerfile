@@ -26,15 +26,18 @@ if [ "$DEV_MODE" = "true" ]; then
 
     echo "Installing development packages..."
     apt-get update
-    apt-get install -y sudo pcscd vsmartcard-vpcd vsmartcard-vpicc python3-virtualsmartcard
+    apt-get install -y sudo pcscd vsmartcard-vpcd vsmartcard-vpicc python3-virtualsmartcard jq help2man
     rm -rf /var/lib/apt/lists/*
 
-    # We have to use the virtualsmartcard package from debian,
-    # because it does not seem to be available on PyPI.
-    # But that package gets installed to the system python installation,
-    # so we create a symlink to make it available to the image-provided
-    # python installation.
-    ln -s /usr/lib/python3/site-packages/virtualsmartcard /usr/local/lib/python${PYTHON_RELEASE}/site-packages/
+    echo "Installing latest vsmartcard from GitHub..."
+    LATEST_VSMARTCARD=$(curl -H "Accept: application/json" -s https://api.github.com/repos/frankmorgner/vsmartcard/releases/latest | jq -r '.tag_name')
+    wget "https://github.com/frankmorgner/vsmartcard/releases/download/$LATEST_VSMARTCARD/$LATEST_VSMARTCARD.tar.gz"
+    tar -xzf "$LATEST_VSMARTCARD.tar.gz"
+    cd $LATEST_VSMARTCARD
+    autoreconf --verbose --install
+    ./configure --sysconfdir=/etc
+    make
+    make install
 
     echo "nfcuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/nfcuser
 
