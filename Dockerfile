@@ -1,9 +1,11 @@
 ARG PYTHON_VARIANT=slim
 ARG DEV_MODE=false
-FROM python:3.11${PYTHON_VARIANT:+-$PYTHON_VARIANT}
+ARG PYTHON_RELEASE=3.11
+FROM python:${PYTHON_RELEASE}${PYTHON_VARIANT:+-$PYTHON_VARIANT}
 
-# Re-declare DEV_MODE after FROM to make it available in subsequent layers
+# Re-declare after FROM to make it available in subsequent layers
 ARG DEV_MODE=false
+ARG PYTHON_RELEASE
 
 # Install system dependencies for PCSC (client libraries only)
 RUN apt-get update && apt-get install -y \
@@ -20,10 +22,19 @@ RUN apt-get update && apt-get install -y \
 # Conditionally install sudo and vsmartcard for development only
 RUN <<EOF
 if [ "$DEV_MODE" = "true" ]; then
+    set -e
+
     echo "Installing development packages..."
     apt-get update
-    apt-get install -y sudo pcscd vsmartcard-vpcd vsmartcard-vpicc
+    apt-get install -y sudo pcscd vsmartcard-vpcd vsmartcard-vpicc python3-virtualsmartcard
     rm -rf /var/lib/apt/lists/*
+
+    # We have to use the virtualsmartcard package from debian,
+    # because it does not seem to be available on PyPI.
+    # But that package gets installed to the system python installation,
+    # so we create a symlink to make it available to the image-provided
+    # python installation.
+    ln -s /usr/lib/python3/site-packages/virtualsmartcard /usr/local/lib/python${PYTHON_RELEASE}/site-packages/
 
     echo "nfcuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/nfcuser
 
