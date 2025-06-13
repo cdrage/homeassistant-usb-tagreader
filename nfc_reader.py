@@ -9,7 +9,6 @@ import threading
 import logging
 import os
 from typing import Optional
-import httpx
 from smartcard.CardConnection import CardConnection
 from smartcard.CardMonitoring import CardMonitor, CardObserver
 from smartcard.util import toHexString
@@ -21,7 +20,6 @@ from t2_ndef_reader import T2NDEFReader
 from mqtt_handler import MQTTHandler
 
 HA_TAG_PREFIX = "https://www.home-assistant.io/tag/"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # Configure logging
 logging.basicConfig(
@@ -38,36 +36,7 @@ _card_monitor: Optional[CardMonitor] = None
 _mqtt_handler: Optional[MQTTHandler] = None
 
 
-def send_ha_webhook(tag_id: str) -> bool:
-    """Send Home Assistant tag ID to webhook endpoint"""
-    if not WEBHOOK_URL:
-        logger.warning(
-            "WEBHOOK_URL not configured, skipping webhook for tag: %s", tag_id
-        )
-        return False
 
-    try:
-        data = {"tag_id": tag_id}
-        with httpx.Client() as client:
-            response = client.post(WEBHOOK_URL, data=data, timeout=10)
-
-        if response.status_code == 200:
-            logger.info("Webhook sent successfully for tag: %s", tag_id)
-            return True
-
-        logger.error(
-            "Webhook failed with status %d for tag: %s",
-            response.status_code,
-            tag_id,
-        )
-        return False
-
-    except httpx.RequestError as e:
-        logger.error("Webhook request failed for tag %s: %s", tag_id, e)
-        return False
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Unexpected error sending webhook for tag %s: %s", tag_id, e)
-        return False
 
 
 def check_pcsc_system() -> bool:
@@ -211,12 +180,6 @@ class NFCCardObserver(CardObserver):
                                 if _mqtt_handler:
                                     _mqtt_handler.publish_tag_state(tag_id)
 
-                                # Send webhook request in background thread
-                                webhook_thread = threading.Thread(
-                                    target=send_ha_webhook, args=(tag_id,), daemon=True
-                                )
-                                webhook_thread.start()
-
                         # Special handling for Android Application Record (AAR)
                         elif record.is_android_app_record:
                             package_name = record.get_android_package_name()
@@ -237,10 +200,6 @@ class NFCCardObserver(CardObserver):
                         card_atr = toHexString(card.atr)
                         if _mqtt_handler:
                             _mqtt_handler.publish_tag_state(f"generic_{card_atr}")
-
-                    # Output raw binary data to stdout for piping
-                    sys.stdout.buffer.write(data)
-                    sys.stdout.buffer.flush()
 
                     self.cards_processed += 1
                     logger.info(

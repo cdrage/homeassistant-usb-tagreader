@@ -12,7 +12,7 @@ A Python application that uses PC/SC to listen for NFC tags on USB NFC readers a
 - Comprehensive type hints throughout the codebase
 - Dockerized for easy deployment across different machines
 - Graceful shutdown handling
-- Home Assistant webhook integration
+- MQTT integration for Home Assistant
 
 ## Requirements
 
@@ -78,12 +78,16 @@ To run the container manually:
 docker run -v /run/pcscd:/run/pcscd nfc-reader
 ```
 
-## Home Assistant Integration
+## MQTT Integration
 
-The application can send webhook requests when Home Assistant NFC tags are detected:
+The application can publish tag state to MQTT for Home Assistant integration. Configure the following environment variables as needed:
 
-1. Set the `WEBHOOK_URL` environment variable to your Home Assistant webhook endpoint
-2. When a tag with a `home-assistant.io/tag/` URI is scanned, it will automatically send the tag ID to the webhook
+- `MQTT_BROKER` - MQTT broker hostname (default: localhost)
+- `MQTT_PORT` - MQTT broker port (default: 1883) 
+- `MQTT_USERNAME` - MQTT username (optional)
+- `MQTT_PASSWORD` - MQTT password (optional)
+
+When a Home Assistant tag is scanned, the tag ID will be published to MQTT topics for Home Assistant auto-discovery.
 
 ## Troubleshooting
 

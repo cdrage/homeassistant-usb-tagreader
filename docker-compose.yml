@@ -10,4 +10,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1  # Ensure Python output is not buffered
       - LOG_LEVEL=INFO  # Set log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-      # - WEBHOOK_URL=http://your-home-assistant:8123/api/webhook/your-webhook-id
+      # MQTT configuration
+      - MQTT_BROKER=your-mqtt-broker
+      - MQTT_USERNAME=your-username
+      - MQTT_PASSWORD=your-password
