@@ -17,20 +17,16 @@
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "echo 'export PATH=\"$PATH:$HOME/.local/bin\"' >> ~/.bashrc",
 	// Configure tool-specific properties.
 	// "customizations": {},
 	// Connect as non-root user. More info: https://aka.ms/dev-containers-non-root.
 	"remoteUser": "nfcuser",
-	"containerEnv": {
-		"EDITOR": "code",
-		"SHELL": "/bin/bash"
-	},
 	"customizations": {
 		"vscode": {
 			"extensions": [
 				"Anthropic.claude-code",
-				"ms-python.black-formatter"
+				"ms-python.black-formatter",
+				"foxundermoon.shell-format"
 			]
 		}
 	}
