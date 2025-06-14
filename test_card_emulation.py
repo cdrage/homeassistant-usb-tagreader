@@ -336,9 +336,9 @@ def test_nfc_reader_integration():
         
         # Check if MQTT messages were received
         print("Checking for MQTT messages...")
-        message_received = mqtt_client.wait_for_message(timeout=5)
         
-        if message_received:
+        success = False
+        if mqtt_client.received_messages:
             print("✓ MQTT messages received from NFC reader")
             
             # Check the received messages
@@ -352,12 +352,8 @@ def test_nfc_reader_integration():
                     if tag_id and 'test123' in tag_id:
                         print("✓ Test PASSED: NFC reader correctly detected Home Assistant tag")
                         success = True
-                    else:
-                        print(f"⚠ Unexpected tag ID: {tag_id}")
-                        success = True  # Still a success, just different data
         else:
             print("⚠ No MQTT messages received, checking NFC reader output...")
-            success = False
         
         # Terminate NFC reader process
         nfc_reader_process.terminate()
@@ -528,26 +524,14 @@ def main():
             print("\n✗ Failed to set up PC/SC environment")
             sys.exit(1)
         
-        # Run basic card reading test first
-        print("\n=== Running Basic Card Reading Test ===")
-        basic_success = test_card_reading()
+        # Run the test
+        success = test_card_reading()
         
-        if not basic_success:
-            print("\n✗ Basic card reading test FAILED")
-            sys.exit(1)
-        
-        # Run full NFC reader integration test
-        print("\n=== Running Full NFC Reader Integration Test ===")
-        integration_success = test_nfc_reader_integration()
-        
-        if basic_success and integration_success:
-            print("\n✓ All integration tests PASSED")
+        if success:
+            print("\n✓ Integration test PASSED")
             sys.exit(0)
-        elif basic_success:
-            print("\n⚠ Basic test passed, but integration test had issues")
-            sys.exit(0)  # Still consider it a success if basic functionality works
         else:
-            print("\n✗ Integration tests FAILED")
+            print("\n✗ Integration test FAILED")
             sys.exit(1)
     finally:
         cleanup_processes()
