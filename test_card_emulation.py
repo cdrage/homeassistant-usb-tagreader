@@ -23,6 +23,9 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 
+# Create logger for this module
+logger = logging.getLogger(__name__)
+
 
 class MQTTBroker:
     """Manages a local MQTT broker for testing."""
@@ -43,15 +46,15 @@ class MQTTBroker:
         
         # Check if broker is running
         if self.broker_process.poll() is None:
-            print("✓ MQTT broker started")
+            logger.info("✓ MQTT broker started")
             return True
         else:
-            # Print any error output
+            # Log any error output
             stdout, stderr = self.broker_process.communicate()
             if stderr:
-                print(f"✗ MQTT broker failed to start: {stderr.decode()}")
+                logger.error(f"✗ MQTT broker failed to start: {stderr.decode()}")
             else:
-                print(f"✗ MQTT broker failed to start: {stdout.decode()}")
+                logger.error(f"✗ MQTT broker failed to start: {stdout.decode()}")
             return False
     
     def stop(self):
@@ -60,7 +63,7 @@ class MQTTBroker:
             self.broker_process.terminate()
             self.broker_process.wait()
             self.broker_process = None
-            print("✓ MQTT broker stopped")
+            logger.info("✓ MQTT broker stopped")
 
 
 class MQTTTestClient:
@@ -85,17 +88,17 @@ class MQTTTestClient:
             return True
             
         except Exception as e:
-            print(f"✗ Failed to start MQTT test client: {e}")
+            logger.error(f"✗ Failed to start MQTT test client: {e}")
             return False
     
     def _on_connect(self, client, userdata, flags, rc, properties=None):
         """Callback for MQTT connection."""
         if rc == 0:
-            print("✓ MQTT test client connected")
+            logger.info("✓ MQTT test client connected")
             # Subscribe to Home Assistant topics
             client.subscribe("homeassistant/sensor/nfc_reader/+")
         else:
-            print(f"✗ MQTT test client connection failed: {rc}")
+            logger.error(f"✗ MQTT test client connection failed: {rc}")
     
     def _on_message(self, client, userdata, msg):
         """Callback for received MQTT messages."""
@@ -105,9 +108,9 @@ class MQTTTestClient:
             message = {"topic": topic, "payload": payload}
             self.received_messages.append(message)
             self.message_event.set()
-            print(f"✓ Received MQTT message: {topic} = {payload}")
+            logger.info(f"✓ Received MQTT message: {topic} = {payload}")
         except Exception as e:
-            print(f"⚠ Error processing MQTT message: {e}")
+            logger.warning(f"⚠ Error processing MQTT message: {e}")
     
     def wait_for_message(self, timeout=10):
         """Wait for an MQTT message."""
@@ -237,7 +240,7 @@ class VirtualCardEmulator:
             
             return True
         except Exception as e:
-            print(f"Failed to start emulation: {e}")
+            logger.error(f"Failed to start emulation: {e}")
             self.stop_emulation()
             return False
     
@@ -250,7 +253,7 @@ class VirtualCardEmulator:
             self.vicc.run()
         except Exception as e:
             if not self._stop_event.is_set():
-                print(f"VICC error: {e}")
+                logger.error(f"VICC error: {e}")
     
     def stop_emulation(self):
         """Stop virtual card emulation."""
@@ -288,18 +291,18 @@ def create_test_ndef_data():
 
 def test_nfc_reader_integration():
     """Test the full NFC reader integration with MQTT."""
-    print("Testing full NFC reader integration with MQTT...")
+    logger.info("Testing full NFC reader integration with MQTT...")
     
     # Start MQTT broker
     mqtt_broker = MQTTBroker()
     if not mqtt_broker.start():
-        print("Failed to start MQTT broker")
+        logger.error("Failed to start MQTT broker")
         return False
     
     # Start MQTT test client
     mqtt_client = MQTTTestClient()
     if not mqtt_client.start():
-        print("Failed to start MQTT test client")
+        logger.error("Failed to start MQTT test client")
         mqtt_broker.stop()
         return False
     
@@ -309,7 +312,7 @@ def test_nfc_reader_integration():
     # Start virtual card emulation
     emulator = VirtualCardEmulator()
     if not emulator.start_emulation(test_ndef):
-        print("Failed to start card emulation")
+        logger.error("Failed to start card emulation")
         mqtt_client.stop()
         mqtt_broker.stop()
         return False
@@ -327,7 +330,7 @@ def test_nfc_reader_integration():
     
     try:
         # Start the NFC reader in a thread
-        print("Starting NFC reader thread...")
+        logger.info("Starting NFC reader thread...")
         nfc_reader_thread = threading.Thread(target=run_nfc_reader, daemon=True)
         nfc_reader_thread.start()
         
@@ -335,29 +338,29 @@ def test_nfc_reader_integration():
         time.sleep(8)
         
         # Check if MQTT messages were received
-        print("Checking for MQTT messages...")
+        logger.info("Checking for MQTT messages...")
         
         success = False
         if mqtt_client.received_messages:
-            print("✓ MQTT messages received from NFC reader")
+            logger.info("✓ MQTT messages received from NFC reader")
             
             # Check the received messages
             for msg in mqtt_client.received_messages:
-                print(f"  Topic: {msg['topic']}")
-                print(f"  Payload: {msg['payload']}")
+                logger.info(f"  Topic: {msg['topic']}")
+                logger.info(f"  Payload: {msg['payload']}")
                 
                 # Verify we got the expected tag data
                 if 'state' in msg['topic'] and 'tag_id' in msg['payload']:
                     tag_id = msg['payload']['tag_id']
                     if tag_id and 'test123' in tag_id:
-                        print("✓ Test PASSED: NFC reader correctly detected Home Assistant tag")
+                        logger.info("✓ Test PASSED: NFC reader correctly detected Home Assistant tag")
                         success = True
         else:
-            print("⚠ No MQTT messages received from NFC reader")
+            logger.warning("⚠ No MQTT messages received from NFC reader")
         
         # Check if there was an exception in the NFC reader thread
         if nfc_reader_exception:
-            print(f"NFC Reader thread exception: {nfc_reader_exception}")
+            logger.error(f"NFC Reader thread exception: {nfc_reader_exception}")
         
         return success
         
@@ -369,46 +372,46 @@ def test_nfc_reader_integration():
 
 def setup_pcsc_environment():
     """Set up PC/SC environment for testing."""
-    print("Setting up PC/SC environment...")
+    logger.info("Setting up PC/SC environment...")
     
     # Check if pcscd is already running
     result = subprocess.run(['pgrep', 'pcscd'], capture_output=True)
     if result.returncode == 0:
-        print("✓ PC/SC daemon already running")
+        logger.info("✓ PC/SC daemon already running")
         return True
     
     # Start pcscd
     try:
         subprocess.run(['sudo', 'pcscd'], check=True, timeout=10)
-        print("✓ PC/SC daemon started")
+        logger.info("✓ PC/SC daemon started")
         time.sleep(1)  # Give pcscd time to initialize
         return True
     except subprocess.TimeoutExpired:
-        print("✓ PC/SC daemon started (backgrounded)")
+        logger.info("✓ PC/SC daemon started (backgrounded)")
         return True
     except Exception as e:
-        print(f"✗ Failed to start PC/SC daemon: {e}")
+        logger.error(f"✗ Failed to start PC/SC daemon: {e}")
         return False
 
 
 def main():
     """Run the integration test."""
-    print("NFC Card Reading Integration Test")
-    print("=" * 40)
+    logger.info("NFC Card Reading Integration Test")
+    logger.info("=" * 40)
 
     # Set up PC/SC environment
     if not setup_pcsc_environment():
-        print("\n✗ Failed to set up PC/SC environment")
+        logger.error("\n✗ Failed to set up PC/SC environment")
         sys.exit(1)
     
     # Run the test
     success = test_nfc_reader_integration()
     
     if success:
-        print("\n✓ Integration test PASSED")
+        logger.info("\n✓ Integration test PASSED")
         sys.exit(0)
     else:
-        print("\n✗ Integration test FAILED")
+        logger.error("\n✗ Integration test FAILED")
         sys.exit(1)
 
 
