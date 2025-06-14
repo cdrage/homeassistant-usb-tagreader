@@ -20,12 +20,13 @@ from mqtt_handler import MQTTHandler
 
 HA_TAG_PREFIX = "https://www.home-assistant.io/tag/"
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    stream=sys.stderr,
-)
+# Configure logging only when run as main module
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        stream=sys.stderr,
+    )
 
 logger = logging.getLogger(__name__)
 

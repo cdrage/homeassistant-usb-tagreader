@@ -9,11 +9,19 @@ import time
 import sys
 import threading
 import json
-import os
+import logging
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 from virtualsmartcard.VirtualSmartcard import SmartcardOS, VirtualICC
 import struct
+import nfc_reader
+
+# Configure logging for the test
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr,
+)
 
 
 class MQTTBroker:
@@ -306,15 +314,22 @@ def test_nfc_reader_integration():
         mqtt_broker.stop()
         return False
     
+    nfc_reader_thread = None
+    nfc_reader_exception = None
+    
+    def run_nfc_reader():
+        """Run NFC reader in a thread with exception handling."""
+        nonlocal nfc_reader_exception
+        try:
+            nfc_reader.main()
+        except Exception as e:
+            nfc_reader_exception = e
+    
     try:
-        # Start the NFC reader as a subprocess
-        print("Starting NFC reader process...")
-        nfc_reader_process = subprocess.Popen(
-            ['python3', 'nfc_reader.py'],
-            env={**dict(os.environ), 'LOG_LEVEL': 'DEBUG'},
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
+        # Start the NFC reader in a thread
+        print("Starting NFC reader thread...")
+        nfc_reader_thread = threading.Thread(target=run_nfc_reader, daemon=True)
+        nfc_reader_thread.start()
         
         # Give NFC reader time to start and detect the card
         time.sleep(8)
@@ -338,25 +353,13 @@ def test_nfc_reader_integration():
                         print("✓ Test PASSED: NFC reader correctly detected Home Assistant tag")
                         success = True
         else:
-            print("⚠ No MQTT messages received, checking NFC reader output...")
+            print("⚠ No MQTT messages received from NFC reader")
         
-        # Terminate NFC reader process
-        nfc_reader_process.terminate()
-        try:
-            stdout, stderr = nfc_reader_process.communicate(timeout=5)
-            print("NFC Reader output:")
-            if stdout:
-                print(f"STDOUT: {stdout.decode()}")
-            if stderr:
-                print(f"STDERR: {stderr.decode()}")
-        except subprocess.TimeoutExpired:
-            nfc_reader_process.kill()
+        # Check if there was an exception in the NFC reader thread
+        if nfc_reader_exception:
+            print(f"NFC Reader thread exception: {nfc_reader_exception}")
         
         return success
-        
-    except Exception as e:
-        print(f"✗ Test FAILED: {e}")
-        return False
         
     finally:
         emulator.stop_emulation()
