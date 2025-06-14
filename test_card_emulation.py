@@ -325,10 +325,7 @@ class VirtualCardEmulator:
             self._stop_event.set()
 
         if self.vicc:
-            try:
-                self.vicc.stop()
-            except:
-                pass
+            self.vicc.stop()
             self.vicc = None
 
         if self.vicc_thread and self.vicc_thread.is_alive():
@@ -421,6 +418,3 @@ def setup_pcsc_environment():
     except subprocess.TimeoutExpired:
         logger.info("✓ PC/SC daemon started (backgrounded)")
         return True
-    except Exception as e:
-        logger.error(f"✗ Failed to start PC/SC daemon: {e}")
-        return False

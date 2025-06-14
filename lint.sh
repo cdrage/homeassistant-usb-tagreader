@@ -33,31 +33,31 @@ check_python() {
 # Run Python linting and validation
 run_python_checks() {
     log_info "Running Python syntax check..."
-    python3 -m py_compile nfc_reader.py
+    python3 -m py_compile *.py
     
     log_info "Running Black code formatter check..."
-    if ! black --check --quiet nfc_reader.py; then
+    if ! black --check --quiet *.py; then
         log_warn "Code formatting issues found. Running Black formatter..."
-        black nfc_reader.py
+        black *.py
         log_info "Code formatted successfully"
     else
         log_info "Code formatting is correct"
     fi
     
     log_info "Running Flake8 linting..."
-    flake8 --max-line-length=100 --ignore=E203,W503 nfc_reader.py || {
+    flake8 --max-line-length=100 --ignore=E203,W503 *.py || {
         log_error "Linting failed"
         exit 1
     }
     
     log_info "Running MyPy type checking..."
-    mypy --ignore-missing-imports nfc_reader.py || {
+    mypy --ignore-missing-imports *.py || {
         log_error "Type checking failed"
         exit 1
     }
     
     log_info "Running Pylint analysis..."
-    pylint --disable=missing-module-docstring,missing-function-docstring nfc_reader.py || {
+    pylint --disable=missing-module-docstring,missing-function-docstring *.py || {
         log_warn "Pylint found some issues, but continuing..."
     }
 }
