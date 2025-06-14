@@ -29,7 +29,7 @@ if [ "$DEV_MODE" = "true" ]; then
     apt-get install -y sudo pcscd vsmartcard-vpcd vsmartcard-vpicc python3-virtualsmartcard jq help2man mosquitto
     rm -rf /var/lib/apt/lists/*
 
-    pip install flake8 black mypy pylint pytest
+    pip install flake8 black mypy pylint pytest pytest-cov
 
     echo "Installing latest vsmartcard from GitHub..."
     LATEST_VSMARTCARD=$(curl -H "Accept: application/json" -s https://api.github.com/repos/frankmorgner/vsmartcard/releases/latest | jq -r '.tag_name')

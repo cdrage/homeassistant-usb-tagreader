@@ -31,8 +31,46 @@ jobs:
     - name: Run tests in Docker container
       run: |
         docker run --rm \
+          -v ${{ github.workspace }}/test-results:/app/test-results \
+          -v ${{ github.workspace }}/coverage-results:/app/coverage-results \
           test-image \
-          python -m pytest -v
+          bash -c "
+            python -m pytest -v \
+              --junitxml=/app/test-results/pytest.xml \
+              --cov=. \
+              --cov-report=xml:/app/coverage-results/coverage.xml \
+              --cov-report=html:/app/coverage-results/htmlcov \
+              --cov-report=term-missing
+          "
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: test-results/
+    
+    - name: Upload coverage results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-results
+        path: coverage-results/
+    
+    - name: Publish test results
+      uses: dorny/test-reporter@v1
+      if: success() || failure()
+      with:
+        name: Test Results
+        path: test-results/pytest.xml
+        reporter: java-junit
+    
+    - name: Add coverage comment to PR
+      if: github.event_name == 'pull_request'
+      uses: py-cov-action/python-coverage-comment-action@v3
+      with:
+        GITHUB_TOKEN: ${{ github.token }}
+        COVERAGE_DATA_PATH: coverage-results/coverage.xml
 
   push:
     needs: build-and-test
