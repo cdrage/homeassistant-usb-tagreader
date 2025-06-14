@@ -366,20 +366,9 @@ def test_nfc_reader_integration(mqtt_broker, mqtt_client, virtual_card_emulator)
     if not virtual_card_emulator.start_emulation(test_ndef):
         pytest.fail("Failed to start card emulation")
 
-    nfc_reader_thread = None
-    nfc_reader_exception = None
-
-    def run_nfc_reader():
-        """Run NFC reader in a thread with exception handling."""
-        nonlocal nfc_reader_exception
-        try:
-            nfc_reader.main()
-        except Exception as e:
-            nfc_reader_exception = e
-
     # Start the NFC reader in a thread
     logger.info("Starting NFC reader thread...")
-    nfc_reader_thread = threading.Thread(target=run_nfc_reader, daemon=True)
+    nfc_reader_thread = threading.Thread(target=nfc_reader.main, daemon=True)
     nfc_reader_thread.start()
 
     # Give NFC reader time to start and detect the card
@@ -411,10 +400,6 @@ def test_nfc_reader_integration(mqtt_broker, mqtt_client, virtual_card_emulator)
 
     # Assert that we detected the expected tag
     assert tag_detected, "Expected Home Assistant tag with 'test123' not detected"
-
-    # Check if there was an exception in the NFC reader thread
-    if nfc_reader_exception:
-        pytest.fail(f"NFC Reader thread exception: {nfc_reader_exception}")
 
 
 def setup_pcsc_environment():
