@@ -26,7 +26,7 @@ if [ "$DEV_MODE" = "true" ]; then
 
     echo "Installing development packages..."
     apt-get update
-    apt-get install -y sudo pcscd vsmartcard-vpcd vsmartcard-vpicc python3-virtualsmartcard jq help2man
+    apt-get install -y sudo pcscd vsmartcard-vpcd vsmartcard-vpicc python3-virtualsmartcard jq help2man mosquitto
     rm -rf /var/lib/apt/lists/*
 
     pip install flake8 black mypy pylint

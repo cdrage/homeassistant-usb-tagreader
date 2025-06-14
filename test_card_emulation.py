@@ -6,18 +6,12 @@ This test requires vsmartcard to be installed and configured.
 
 import subprocess
 import time
-import signal
 import sys
 import threading
 import json
 import os
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
-from smartcard.System import readers
-from smartcard.CardRequest import CardRequest
-from smartcard.CardType import AnyCardType
-from smartcard.Exceptions import CardRequestTimeoutException, NoCardException
-from t2_ndef_reader import read_ndef
 from virtualsmartcard.VirtualSmartcard import SmartcardOS, VirtualICC
 import struct
 
@@ -30,38 +24,26 @@ class MQTTBroker:
         
     def start(self):
         """Start a local MQTT broker using mosquitto."""
-        try:
-            # Check if mosquitto is available
-            subprocess.run(['which', 'mosquitto'], check=True, capture_output=True)
-            
-            # Start mosquitto broker
-            self.broker_process = subprocess.Popen(
-                ['mosquitto', '-v'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            
-            time.sleep(2)  # Give broker time to start
-            
-            # Check if broker is running
-            if self.broker_process.poll() is None:
-                print("✓ MQTT broker started")
-                return True
+        # Start mosquitto broker
+        self.broker_process = subprocess.Popen(
+            ['mosquitto', '-v'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        time.sleep(2)  # Give broker time to start
+        
+        # Check if broker is running
+        if self.broker_process.poll() is None:
+            print("✓ MQTT broker started")
+            return True
+        else:
+            # Print any error output
+            stdout, stderr = self.broker_process.communicate()
+            if stderr:
+                print(f"✗ MQTT broker failed to start: {stderr.decode()}")
             else:
-                print("✗ MQTT broker failed to start")
-                return False
-                
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            print("⚠ mosquitto not found, installing...")
-            try:
-                subprocess.run(['sudo', 'apt-get', 'update'], check=True, capture_output=True)
-                subprocess.run(['sudo', 'apt-get', 'install', '-y', 'mosquitto'], check=True, capture_output=True)
-                return self.start()  # Try again after installation
-            except subprocess.CalledProcessError as e:
-                print(f"✗ Failed to install mosquitto: {e}")
-                return False
-        except Exception as e:
-            print(f"✗ Failed to start MQTT broker: {e}")
+                print(f"✗ MQTT broker failed to start: {stdout.decode()}")
             return False
     
     def stop(self):
@@ -182,18 +164,18 @@ class T2NFCCardOS(SmartcardOS):
             
         return pages
     
-    def getATR(self):
+    def getATR(self): # type: ignore
         """Return ATR for T2 NFC card."""
         # Simplified ATR for NFC Type 2 card
         return bytes([0x3B, 0x8F, 0x80, 0x01, 0x80, 0x4F, 0x0C, 0xA0, 0x00, 0x00, 0x03, 0x06, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x68])
     
-    def execute(self, apdu):
+    def execute(self, msg): # type: ignore
         """Process APDU commands for T2 NFC card."""
-        if len(apdu) < 4:
+        if len(msg) < 4:
             return bytes([0x6F, 0x00])  # Wrong length
             
-        cla, ins, p1, p2 = apdu[:4]
-        lc = apdu[4] if len(apdu) > 4 else 0
+        cla, ins, p1, p2 = msg[:4]
+        lc = msg[4] if len(msg) > 4 else 0
         
         # Handle T2 READ command (0xFF 0xB0)
         if cla == 0xFF and ins == 0xB0:
@@ -406,45 +388,25 @@ def setup_pcsc_environment():
         return False
 
 
-def cleanup_processes():
-    """Clean up any processes started by the test."""
-    try:
-        # Kill any remaining vicc processes
-        subprocess.run(['pkill', '-f', 'python3.*vicc'], stderr=subprocess.DEVNULL)
-    except:
-        pass
-
-
 def main():
     """Run the integration test."""
     print("NFC Card Reading Integration Test")
     print("=" * 40)
+
+    # Set up PC/SC environment
+    if not setup_pcsc_environment():
+        print("\n✗ Failed to set up PC/SC environment")
+        sys.exit(1)
     
-    # Set up signal handler for clean shutdown
-    def signal_handler(sig, frame):
-        print("\nShutting down...")
-        cleanup_processes()
+    # Run the test
+    success = test_nfc_reader_integration()
+    
+    if success:
+        print("\n✓ Integration test PASSED")
         sys.exit(0)
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    
-    try:
-        # Set up PC/SC environment
-        if not setup_pcsc_environment():
-            print("\n✗ Failed to set up PC/SC environment")
-            sys.exit(1)
-        
-        # Run the test
-        success = test_nfc_reader_integration()
-        
-        if success:
-            print("\n✓ Integration test PASSED")
-            sys.exit(0)
-        else:
-            print("\n✗ Integration test FAILED")
-            sys.exit(1)
-    finally:
-        cleanup_processes()
+    else:
+        print("\n✗ Integration test FAILED")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
