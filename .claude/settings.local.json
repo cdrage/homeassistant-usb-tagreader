@@ -4,7 +4,8 @@
       "Bash(./deploy.sh:*)",
       "Bash(python3:*)",
       "Bash(find:*)",
-      "Bash(pytest:*)"
+      "Bash(pytest:*)",
+      "Bash(python -m pytest --help)"
     ],
     "deny": []
   }
