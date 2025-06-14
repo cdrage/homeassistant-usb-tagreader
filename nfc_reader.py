@@ -123,77 +123,74 @@ class NFCCardObserver(CardObserver):
                         logger.error("Error reading NDEF: %s", error)
                         return
 
-                    if data:
-                        # Output hex representation for debugging
-                        logger.debug(
-                            "Raw NDEF data (%d bytes): %s", len(data), data.hex()
-                        )
-
-                        records = decode_records(data)
-
-                        ha_tag_found = False  # Track if we found a Home Assistant tag
-
-                        logger.info("=== NDEF Records ===")
-                        for i, record in enumerate(records):
-                            logger.info("Record %d:", i + 1)
-                            logger.info("  TNF: %d (%s)", record.tnf, record.tnf_name)
-                            logger.info(
-                                "  Type: %s (hex: %s)",
-                                record.type_str,
-                                record.record_type.hex(),
-                            )
-                            if record.id_str:
-                                logger.info("  ID: %s", record.id_str)
-                            logger.info(
-                                "  Payload length: %d bytes", len(record.payload)
-                            )
-                            logger.debug("  Payload (hex): %s", record.payload.hex())
-                            logger.debug("  Payload (string): %r", record.payload_str)
-
-                            # Special handling for URI records
-                            if record.is_uri_record:
-                                uri = record.get_decoded_uri()
-                                logger.info("  Decoded URI: %s", uri)
-
-                                # Check if it's a Home Assistant tag
-                                if uri and uri.startswith(HA_TAG_PREFIX):
-                                    tag_id = uri[len(HA_TAG_PREFIX) :]
-                                    logger.info("  Home Assistant Tag ID: %s", tag_id)
-                                    ha_tag_found = True
-
-                                    # Publish MQTT state for card presence
-                                    self.mqtt_handler.publish_tag_state(tag_id)
-
-                            # Special handling for Android Application Record (AAR)
-                            elif record.is_android_app_record:
-                                package_name = record.get_android_package_name()
-                                logger.info("  Android Package: %s", package_name)
-
-                            logger.debug(
-                                "  Flags: MB=%s, ME=%s, CF=%s, SR=%s, IL=%s",
-                                record.message_begin,
-                                record.last_record,
-                                record.chunked,
-                                record.short_record,
-                                record.has_id,
-                            )
-
-                        # If no Home Assistant tag was found, publish generic tag presence
-                        if not ha_tag_found:
-                            # Use card ATR as a unique identifier for non-HA tags
-                            card_atr = toHexString(card.atr)
-                            self.mqtt_handler.publish_tag_state(f"generic_{card_atr}")
-
-                        self.cards_processed += 1
-                        logger.info(
-                            "--- Card read completed --- (Total: %d)",
-                            self.cards_processed,
-                        )
-                    else:
+                    if not data:
                         logger.info("No NDEF data found on card")
                         # Still publish MQTT state for cards without NDEF data
                         card_atr = toHexString(card.atr)
                         self.mqtt_handler.publish_tag_state(f"no_ndef_{card_atr}")
+                        return
+
+                    # Output hex representation for debugging
+                    logger.debug("Raw NDEF data (%d bytes): %s", len(data), data.hex())
+
+                    records = decode_records(data)
+
+                    ha_tag_found = False  # Track if we found a Home Assistant tag
+
+                    logger.info("=== NDEF Records ===")
+                    for i, record in enumerate(records):
+                        logger.info("Record %d:", i + 1)
+                        logger.info("  TNF: %d (%s)", record.tnf, record.tnf_name)
+                        logger.info(
+                            "  Type: %s (hex: %s)",
+                            record.type_str,
+                            record.record_type.hex(),
+                        )
+                        if record.id_str:
+                            logger.info("  ID: %s", record.id_str)
+                        logger.info("  Payload length: %d bytes", len(record.payload))
+                        logger.debug("  Payload (hex): %s", record.payload.hex())
+                        logger.debug("  Payload (string): %r", record.payload_str)
+
+                        # Special handling for URI records
+                        if record.is_uri_record:
+                            uri = record.get_decoded_uri()
+                            logger.info("  Decoded URI: %s", uri)
+
+                            # Check if it's a Home Assistant tag
+                            if uri and uri.startswith(HA_TAG_PREFIX):
+                                tag_id = uri[len(HA_TAG_PREFIX) :]
+                                logger.info("  Home Assistant Tag ID: %s", tag_id)
+                                ha_tag_found = True
+
+                                # Publish MQTT state for card presence
+                                self.mqtt_handler.publish_tag_state(tag_id)
+
+                        # Special handling for Android Application Record (AAR)
+                        elif record.is_android_app_record:
+                            package_name = record.get_android_package_name()
+                            logger.info("  Android Package: %s", package_name)
+
+                        logger.debug(
+                            "  Flags: MB=%s, ME=%s, CF=%s, SR=%s, IL=%s",
+                            record.message_begin,
+                            record.last_record,
+                            record.chunked,
+                            record.short_record,
+                            record.has_id,
+                        )
+
+                    # If no Home Assistant tag was found, publish generic tag presence
+                    if not ha_tag_found:
+                        # Use card ATR as a unique identifier for non-HA tags
+                        card_atr = toHexString(card.atr)
+                        self.mqtt_handler.publish_tag_state(f"generic_{card_atr}")
+
+                    self.cards_processed += 1
+                    logger.info(
+                        "--- Card read completed --- (Total: %d)",
+                        self.cards_processed,
+                    )
 
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("Error processing card: %s", e)
