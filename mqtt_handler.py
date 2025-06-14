@@ -143,11 +143,6 @@ class MQTTHandler:
         """Cleanup MQTT client"""
         if self.client:
             try:
-                # Publish final state (no tag present)
-                if self.connected:
-                    self.publish_tag_state(None)
-                    time.sleep(0.5)  # Give time for message to be sent
-                
                 self.client.loop_stop()
                 self.client.disconnect()
                 logger.info("MQTT client disconnected and cleaned up")
