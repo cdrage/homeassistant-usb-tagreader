@@ -24,8 +24,12 @@ fi
 log_info "Starting NFC Reader application..."
 cd /app 
 python nfc_reader.py
+ret=$?
 
-# Wait a while to avoid docker restarting the container immediately
-log_error "NFC Reader application exited, probably due to an error."
-log_info "Waiting for 65 seconds before exiting..."
-sleep 65
+if [ $ret -ne 0 ]; then
+    log_error "NFC Reader application exited with error code $ret."
+    log_info "Waiting for 65 seconds before exiting..."
+    sleep 65
+else
+    log_info "NFC Reader application exited normally."
+fi
