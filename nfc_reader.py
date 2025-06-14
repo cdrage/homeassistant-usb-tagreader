@@ -76,7 +76,7 @@ def check_pcsc_system() -> bool:
 class NFCCardObserver(CardObserver):
     """Observer for NFC card insertion and removal events"""
 
-    def __init__(self, mqtt_handler: Optional[MQTTHandler] = None):
+    def __init__(self, mqtt_handler: MQTTHandler):
         self.cards_processed = 0
         self.processing_lock = threading.Lock()
         self.mqtt_handler = mqtt_handler
@@ -106,8 +106,7 @@ class NFCCardObserver(CardObserver):
             for card in removedcards:
                 logger.info("Card removed: %s", toHexString(card.atr))
                 # Publish MQTT state for card removal (no tag present)
-                if self.mqtt_handler:
-                    self.mqtt_handler.publish_tag_state(None)
+                self.mqtt_handler.publish_tag_state(None)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Error in observer update: %s", e)
@@ -174,8 +173,7 @@ class NFCCardObserver(CardObserver):
                                 ha_tag_found = True
 
                                 # Publish MQTT state for card presence
-                                if self.mqtt_handler:
-                                    self.mqtt_handler.publish_tag_state(tag_id)
+                                self.mqtt_handler.publish_tag_state(tag_id)
 
                         # Special handling for Android Application Record (AAR)
                         elif record.is_android_app_record:
@@ -195,8 +193,7 @@ class NFCCardObserver(CardObserver):
                     if not ha_tag_found:
                         # Use card ATR as a unique identifier for non-HA tags
                         card_atr = toHexString(card.atr)
-                        if self.mqtt_handler:
-                            self.mqtt_handler.publish_tag_state(f"generic_{card_atr}")
+                        self.mqtt_handler.publish_tag_state(f"generic_{card_atr}")
 
                     self.cards_processed += 1
                     logger.info(
@@ -206,8 +203,7 @@ class NFCCardObserver(CardObserver):
                     logger.info("No NDEF data found on card")
                     # Still publish MQTT state for cards without NDEF data
                     card_atr = toHexString(card.atr)
-                    if self.mqtt_handler:
-                        self.mqtt_handler.publish_tag_state(f"no_ndef_{card_atr}")
+                    self.mqtt_handler.publish_tag_state(f"no_ndef_{card_atr}")
 
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("Error processing card: %s", e)

@@ -87,6 +87,7 @@ class MQTTHandler:
     def _publish_ha_discovery(self):
         """Publish Home Assistant MQTT discovery configuration"""
         if not self.client or not self.connected:
+            logger.debug("Skipping HA discovery publish - MQTT not connected")
             return
         
         discovery_config = {
@@ -117,6 +118,7 @@ class MQTTHandler:
     def publish_tag_state(self, tag_id: Optional[str]):
         """Publish current tag state to MQTT"""
         if not self.client or not self.connected:
+            logger.debug("Skipping tag state publish - MQTT not connected (tag_id: %s)", tag_id)
             return
         
         self.current_tag_id = tag_id
