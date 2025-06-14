@@ -12,6 +12,7 @@ import threading
 import json
 import os
 import paho.mqtt.client as mqtt
+from paho.mqtt.enums import CallbackAPIVersion
 from smartcard.System import readers
 from smartcard.CardRequest import CardRequest
 from smartcard.CardType import AnyCardType
@@ -83,7 +84,7 @@ class MQTTTestClient:
     def start(self):
         """Start MQTT test client."""
         try:
-            self.client = mqtt.Client(client_id="test_client")
+            self.client = mqtt.Client(CallbackAPIVersion.VERSION2, client_id="test_client")
             self.client.on_connect = self._on_connect
             self.client.on_message = self._on_message
             
@@ -97,7 +98,7 @@ class MQTTTestClient:
             print(f"✗ Failed to start MQTT test client: {e}")
             return False
     
-    def _on_connect(self, client, userdata, flags, rc):
+    def _on_connect(self, client, userdata, flags, rc, properties=None):
         """Callback for MQTT connection."""
         if rc == 0:
             print("✓ MQTT test client connected")
@@ -223,7 +224,7 @@ class VirtualCardEmulator:
     def __init__(self):
         self.vicc = None
         self.vicc_thread = None
-        self._stop_event = None
+        self._stop_event = threading.Event()
         
     def start_emulation(self, ndef_data=None):
         """Start virtual card emulation with T2 NFC card containing NDEF data."""
@@ -252,6 +253,9 @@ class VirtualCardEmulator:
     
     def _run_vicc(self):
         """Run the virtual ICC in a thread."""
+        if not self.vicc:
+            raise RuntimeError("Virtual ICC not initialized")
+
         try:
             self.vicc.run()
         except Exception as e:
@@ -278,7 +282,7 @@ class VirtualCardEmulator:
 def create_test_ndef_data():
     """Create test NDEF data for a Type 2 NFC tag."""
     # Home Assistant URL record
-    url = "home-assistant.io/tag/test123"
+    url = "www.home-assistant.io/tag/test123"
     
     # NDEF record: URI record with HTTP/HTTPS identifier
     ndef_record = bytes([
@@ -378,107 +382,15 @@ def test_nfc_reader_integration():
         mqtt_broker.stop()
 
 
-def test_card_reading():
-    """Test basic card reading functionality."""
-    print("Testing basic NFC card reading with virtual T2 NFC emulation...")
-    
-    # Create test NDEF data
-    test_ndef = create_test_ndef_data()
-    
-    # Start virtual card emulation
-    emulator = VirtualCardEmulator()
-    if not emulator.start_emulation(test_ndef):
-        print("Failed to start card emulation")
-        return False
-    
-    try:
-        # Wait for virtual reader to be available
-        time.sleep(2)
-        
-        # Check if virtual reader is available
-        available_readers = readers()
-        print(f"Available readers: {[str(r) for r in available_readers]}")
-        
-        if not available_readers:
-            print("No card readers available")
-            return False
-        
-        # Try to read from the virtual card
-        print("Attempting to read from virtual card...")
-        
-        # Create card request
-        cardrequest = CardRequest(timeout=10, cardType=AnyCardType())
-        
-        try:
-            # Wait for card
-            cardservice = cardrequest.waitforcard()
-            cardservice.connection.connect()
-            print("✓ Successfully connected to virtual card")
-            
-            # Test T2 NDEF reading
-            try:
-                print("Testing T2 NDEF reading...")
-                ndef_data, error = read_ndef(cardservice.connection)
-                
-                if error:
-                    print(f"NDEF read error: {error}")
-                    return False
-                    
-                if ndef_data:
-                    print(f"✓ Successfully read NDEF data: {ndef_data.hex()}")
-                    print(f"✓ NDEF data length: {len(ndef_data)} bytes")
-                    
-                    # Verify it matches our test data
-                    expected_ndef = create_test_ndef_data()
-                    if ndef_data == expected_ndef:
-                        print("✓ Test PASSED: NDEF data matches expected value")
-                        return True
-                    else:
-                        print(f"⚠ NDEF data mismatch. Expected: {expected_ndef.hex()}")
-                        print("✓ Test PASSED: NDEF reading works but data differs")
-                        return True
-                else:
-                    print("✗ No NDEF data found")
-                    return False
-                    
-            except Exception as e:
-                print(f"NDEF read error: {e}")
-                # Fallback to basic communication test
-                try:
-                    response, sw1, sw2 = cardservice.connection.transmit([0x00, 0xA4, 0x04, 0x00])
-                    print(f"Basic APDU response: {response}, SW1: {sw1:02X}, SW2: {sw2:02X}")
-                    print("✓ Test PASSED: Basic card communication working")
-                    return True
-                except Exception as inner_e:
-                    print(f"Card communication error: {inner_e}")
-                    return False
-                
-        except CardRequestTimeoutException:
-            print("✗ Test FAILED: Timeout waiting for card")
-            return False
-        except NoCardException:
-            print("✗ Test FAILED: No card present")
-            return False
-        except Exception as e:
-            print(f"✗ Test FAILED: Error reading card: {e}")
-            return False
-            
-    finally:
-        emulator.stop_emulation()
-
-
 def setup_pcsc_environment():
     """Set up PC/SC environment for testing."""
     print("Setting up PC/SC environment...")
     
     # Check if pcscd is already running
-    try:
-        result = subprocess.run(['pgrep', 'pcscd'], capture_output=True)
-        if result.returncode == 0:
-            print("✓ PC/SC daemon already running")
-            return True
-    except Exception:
-        pass
+    result = subprocess.run(['pgrep', 'pcscd'], capture_output=True)
+    if result.returncode == 0:
+        print("✓ PC/SC daemon already running")
+        return True
     
     # Start pcscd
     try:
@@ -523,7 +435,7 @@ def main():
             sys.exit(1)
         
         # Run the test
-        success = test_card_reading()
+        success = test_nfc_reader_integration()
         
         if success:
             print("\n✓ Integration test PASSED")
