@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(./deploy.sh:*)"
+      "Bash(./deploy.sh:*)",
+      "Bash(python3:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }
