@@ -13,33 +13,123 @@ from smartcard.CardRequest import CardRequest
 from smartcard.CardType import AnyCardType
 from smartcard.Exceptions import CardRequestTimeoutException, NoCardException
 from t2_ndef_reader import T2NDEFReader
+from virtualsmartcard.VirtualSmartcard import SmartcardOS, VirtualICC
+import threading
+import struct
 
+
+class T2NFCCardOS(SmartcardOS):
+    """SmartcardOS implementation for T2 NFC card emulation with NDEF data."""
+    
+    def __init__(self, ndef_data=None):
+        """Initialize T2 NFC card with optional NDEF data."""
+        self.ndef_data = ndef_data or b""
+        self.pages = self._create_t2_structure()
+        
+    def _create_t2_structure(self):
+        """Create T2 tag page structure with NDEF data."""
+        pages = {}
+        
+        # Page 0-1: UID (can be fixed for testing)
+        pages[0] = [0x04, 0x12, 0x34, 0x56]  # UID part 1
+        pages[1] = [0x78, 0x9A, 0xBC, 0xDE]  # UID part 2
+        
+        # Page 2: Internal/lock bytes
+        pages[2] = [0x00, 0x00, 0x00, 0x00]
+        
+        # Page 3: Capability Container
+        pages[3] = [0xE1, 0x10, 0x12, 0x00]  # CC: NDEF capable, ver 1.0, 18 bytes data area
+        
+        if self.ndef_data:
+            # Create NDEF TLV structure
+            if len(self.ndef_data) < 0xFF:
+                # Short form length
+                ndef_tlv = bytes([0x03, len(self.ndef_data)]) + self.ndef_data
+            else:
+                # Long form length (3-byte length field)
+                length_bytes = struct.pack('>H', len(self.ndef_data))
+                ndef_tlv = bytes([0x03, 0xFF]) + length_bytes + self.ndef_data
+            
+            # Add terminator TLV
+            ndef_tlv += bytes([0xFE])
+            
+            # Pack NDEF TLV into pages starting at page 4
+            page_num = 4
+            offset = 0
+            while offset < len(ndef_tlv):
+                page_data = list(ndef_tlv[offset:offset+4])
+                page_data.extend([0x00] * (4 - len(page_data)))  # Pad to 4 bytes
+                pages[page_num] = page_data
+                page_num += 1
+                offset += 4
+        else:
+            # Empty NDEF with just terminator TLV
+            pages[4] = [0xFE, 0x00, 0x00, 0x00]
+            
+        return pages
+    
+    def getATR(self):
+        """Return ATR for T2 NFC card."""
+        # Simplified ATR for NFC Type 2 card
+        return bytes([0x3B, 0x8F, 0x80, 0x01, 0x80, 0x4F, 0x0C, 0xA0, 0x00, 0x00, 0x03, 0x06, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x68])
+    
+    def execute(self, apdu):
+        """Process APDU commands for T2 NFC card."""
+        if len(apdu) < 4:
+            return bytes([0x6F, 0x00])  # Wrong length
+            
+        cla, ins, p1, p2 = apdu[:4]
+        lc = apdu[4] if len(apdu) > 4 else 0
+        
+        # Handle T2 READ command (0xFF 0xB0)
+        if cla == 0xFF and ins == 0xB0:
+            page = p2
+            length = lc if lc > 0 else 4
+            
+            if page in self.pages:
+                page_data = self.pages[page][:length]
+                # Pad with zeros if needed
+                page_data.extend([0x00] * (length - len(page_data)))
+                return bytes(page_data) + bytes([0x90, 0x00])
+            else:
+                # Return zeros for undefined pages
+                return bytes([0x00] * length) + bytes([0x90, 0x00])
+        
+        # Handle SELECT command (basic support)
+        elif cla == 0x00 and ins == 0xA4:
+            return bytes([0x90, 0x00])  # Success
+            
+        # Unknown command
+        else:
+            return bytes([0x6D, 0x00])  # Instruction not supported
 
 
 class VirtualCardEmulator:
     """Manages virtual smart card emulation for testing."""
     
     def __init__(self):
-        self.vicc_process = None
+        self.vicc = None
+        self.vicc_thread = None
+        self._stop_event = None
         
     def start_emulation(self, ndef_data=None):
         """Start virtual card emulation with T2 NFC card containing NDEF data."""
         try:
-            # Start T2 emulator script with NDEF data
-            if ndef_data:
-                # Pass NDEF data as hex string argument
-                cmd = ['python3', 't2_emulator.py', ndef_data.hex()]
-            else:
-                # Use default NDEF data
-                cmd = ['python3', 't2_emulator.py']
+            # Create T2 NFC card OS with NDEF data
+            card_os = T2NFCCardOS(ndef_data)
             
-            self.vicc_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
+            # Create virtual ICC
+            self.vicc = VirtualICC("", "iso7816", "localhost", 35963)
+            self.vicc.os = card_os
             
-            time.sleep(3)  # Give vicc time to start and connect
+            # Create stop event for clean shutdown
+            self._stop_event = threading.Event()
+            
+            # Start virtual ICC in a separate thread
+            self.vicc_thread = threading.Thread(target=self._run_vicc, daemon=True)
+            self.vicc_thread.start()
+            
+            time.sleep(2)  # Give vicc time to start and connect
             
             return True
         except Exception as e:
@@ -47,12 +137,29 @@ class VirtualCardEmulator:
             self.stop_emulation()
             return False
     
+    def _run_vicc(self):
+        """Run the virtual ICC in a thread."""
+        try:
+            self.vicc.run()
+        except Exception as e:
+            if not self._stop_event.is_set():
+                print(f"VICC error: {e}")
+    
     def stop_emulation(self):
         """Stop virtual card emulation."""
-        if self.vicc_process:
-            self.vicc_process.terminate()
-            self.vicc_process.wait()
-            self.vicc_process = None
+        if self._stop_event:
+            self._stop_event.set()
+        
+        if self.vicc:
+            try:
+                self.vicc.stop()
+            except:
+                pass
+            self.vicc = None
+        
+        if self.vicc_thread and self.vicc_thread.is_alive():
+            self.vicc_thread.join(timeout=2)
+            self.vicc_thread = None
 
 
 def create_test_ndef_data():
