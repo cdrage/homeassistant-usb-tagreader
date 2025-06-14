@@ -49,110 +49,108 @@ class NDEFRecord:
             return self.payload_str
         return None
 
-class NDEFDecoder:
-    """Decode NDEF records according to NFC Forum specification"""
+def get_tnf_name(tnf: int) -> str:
+    """Get human-readable TNF name"""
+    tnf_names: Dict[int, str] = {
+        0x00: "Empty",
+        0x01: "NFC Forum well-known type",
+        0x02: "Media type (RFC 2046)",
+        0x03: "Absolute URI (RFC 3986)", 
+        0x04: "NFC Forum external type",
+        0x05: "Unknown",
+        0x06: "Unchanged",
+        0x07: "Reserved"
+    }
+    return tnf_names.get(tnf, f"Unknown ({tnf})")
+
+
+def decode_record(data: bytes, offset: int) -> tuple[Optional[NDEFRecord], int]:
+    """Decode a single NDEF record, returns (record, new_offset)"""
+    if offset >= len(data):
+        return None, offset
     
-    def __init__(self, data: bytes) -> None:
-        self.data = data
-        self.offset = 0
+    # Read the TNF and flags byte
+    tnf_flags = data[offset]
+    offset += 1
     
-    def decode_records(self) -> List[NDEFRecord]:
-        """Decode all NDEF records in the data"""
-        records: List[NDEFRecord] = []
-        
-        while self.offset < len(self.data):
-            record = self.decode_record()
-            if record is None:
-                break
-            records.append(record)
-            
-            # If this was the last record (ME flag set), stop
-            if record.last_record:
-                break
-        
-        return records
+    # Extract flags
+    mb = (tnf_flags & 0x80) != 0  # Message Begin
+    me = (tnf_flags & 0x40) != 0  # Message End
+    cf = (tnf_flags & 0x20) != 0  # Chunk Flag
+    sr = (tnf_flags & 0x10) != 0  # Short Record
+    il = (tnf_flags & 0x08) != 0  # ID Length present
+    tnf = tnf_flags & 0x07        # Type Name Format
     
-    def decode_record(self) -> Optional[NDEFRecord]:
-        """Decode a single NDEF record"""
-        if self.offset >= len(self.data):
-            return None
-        
-        # Read the TNF and flags byte
-        tnf_flags = self.data[self.offset]
-        self.offset += 1
-        
-        # Extract flags
-        mb = (tnf_flags & 0x80) != 0  # Message Begin
-        me = (tnf_flags & 0x40) != 0  # Message End
-        cf = (tnf_flags & 0x20) != 0  # Chunk Flag
-        sr = (tnf_flags & 0x10) != 0  # Short Record
-        il = (tnf_flags & 0x08) != 0  # ID Length present
-        tnf = tnf_flags & 0x07        # Type Name Format
-        
-        # Read Type Length
-        type_length = self.data[self.offset]
-        self.offset += 1
-        
-        # Read Payload Length (1 or 4 bytes depending on SR flag)
-        if sr:
-            payload_length = self.data[self.offset]
-            self.offset += 1
-        else:
-            payload_length = (self.data[self.offset] << 24) | \
-                           (self.data[self.offset + 1] << 16) | \
-                           (self.data[self.offset + 2] << 8) | \
-                           self.data[self.offset + 3]
-            self.offset += 4
-        
-        # Read ID Length if present
-        id_length = 0
-        if il:
-            id_length = self.data[self.offset]
-            self.offset += 1
-        
-        # Read Type
-        record_type = self.data[self.offset:self.offset + type_length]
-        self.offset += type_length
-        
-        # Read ID if present
-        record_id = b""
-        if il:
-            record_id = self.data[self.offset:self.offset + id_length]
-            self.offset += id_length
-        
-        # Read Payload
-        payload = self.data[self.offset:self.offset + payload_length]
-        self.offset += payload_length
-        
-        return NDEFRecord(
-            tnf=tnf,
-            tnf_name=self.get_tnf_name(tnf),
-            record_type=record_type,
-            type_str=record_type.decode('utf-8', errors='ignore'),
-            record_id=record_id,
-            id_str=record_id.decode('utf-8', errors='ignore') if record_id else '',
-            payload=payload,
-            payload_str=payload.decode('utf-8', errors='ignore'),
-            message_begin=mb,
-            last_record=me,
-            chunked=cf,
-            short_record=sr,
-            has_id=il
-        )
+    # Read Type Length
+    type_length = data[offset]
+    offset += 1
     
-    def get_tnf_name(self, tnf: int) -> str:
-        """Get human-readable TNF name"""
-        tnf_names: Dict[int, str] = {
-            0x00: "Empty",
-            0x01: "NFC Forum well-known type",
-            0x02: "Media type (RFC 2046)",
-            0x03: "Absolute URI (RFC 3986)", 
-            0x04: "NFC Forum external type",
-            0x05: "Unknown",
-            0x06: "Unchanged",
-            0x07: "Reserved"
-        }
-        return tnf_names.get(tnf, f"Unknown ({tnf})")
+    # Read Payload Length (1 or 4 bytes depending on SR flag)
+    if sr:
+        payload_length = data[offset]
+        offset += 1
+    else:
+        payload_length = (data[offset] << 24) | \
+                       (data[offset + 1] << 16) | \
+                       (data[offset + 2] << 8) | \
+                       data[offset + 3]
+        offset += 4
+    
+    # Read ID Length if present
+    id_length = 0
+    if il:
+        id_length = data[offset]
+        offset += 1
+    
+    # Read Type
+    record_type = data[offset:offset + type_length]
+    offset += type_length
+    
+    # Read ID if present
+    record_id = b""
+    if il:
+        record_id = data[offset:offset + id_length]
+        offset += id_length
+    
+    # Read Payload
+    payload = data[offset:offset + payload_length]
+    offset += payload_length
+    
+    record = NDEFRecord(
+        tnf=tnf,
+        tnf_name=get_tnf_name(tnf),
+        record_type=record_type,
+        type_str=record_type.decode('utf-8', errors='ignore'),
+        record_id=record_id,
+        id_str=record_id.decode('utf-8', errors='ignore') if record_id else '',
+        payload=payload,
+        payload_str=payload.decode('utf-8', errors='ignore'),
+        message_begin=mb,
+        last_record=me,
+        chunked=cf,
+        short_record=sr,
+        has_id=il
+    )
+    
+    return record, offset
+
+
+def decode_records(data: bytes) -> List[NDEFRecord]:
+    """Decode all NDEF records in the data"""
+    records: List[NDEFRecord] = []
+    offset = 0
+    
+    while offset < len(data):
+        record, offset = decode_record(data, offset)
+        if record is None:
+            break
+        records.append(record)
+        
+        # If this was the last record (ME flag set), stop
+        if record.last_record:
+            break
+    
+    return records
 
 def decode_uri_payload(payload: bytes) -> str:
     """Decode URI record payload"""
@@ -212,8 +210,7 @@ def analyze_home_assistant_data(data: bytes) -> None:
     logger.debug("Raw string: %r", data)
     logger.info("Length: %d bytes", len(data))
     
-    decoder = NDEFDecoder(data)
-    records = decoder.decode_records()
+    records = decode_records(data)
     
     for i, record in enumerate(records):
         logger.info("Record %d:", i + 1)

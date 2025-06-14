@@ -12,7 +12,7 @@ from smartcard.util import toHexString
 from smartcard.Exceptions import NoCardException
 from smartcard.System import readers
 
-from ndef_decoder import NDEFDecoder
+from ndef_decoder import decode_records
 from t2_ndef_reader import read_ndef
 from mqtt_handler import MQTTHandler
 
@@ -129,8 +129,7 @@ class NFCCardObserver(CardObserver):
                             "Raw NDEF data (%d bytes): %s", len(data), data.hex()
                         )
 
-                        decoder = NDEFDecoder(data)
-                        records = decoder.decode_records()
+                        records = decode_records(data)
 
                         ha_tag_found = False  # Track if we found a Home Assistant tag
 
