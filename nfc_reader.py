@@ -6,11 +6,13 @@ import time
 import threading
 import logging
 import os
+from typing import Any, Tuple, List
 from smartcard.CardConnection import CardConnection
 from smartcard.CardMonitoring import CardMonitor, CardObserver
 from smartcard.util import toHexString
 from smartcard.Exceptions import NoCardException
 from smartcard.System import readers
+from smartcard.Card import Card
 
 from ndef_decoder import decode_records
 from t2_ndef_reader import read_ndef
@@ -69,13 +71,13 @@ def check_pcsc_system() -> bool:
 class NFCCardObserver(CardObserver):
     """Observer for NFC card insertion and removal events"""
 
-    def __init__(self, mqtt_handler: MQTTHandler):
+    def __init__(self, mqtt_handler: MQTTHandler) -> None:
         self.cards_processed = 0
         self.processing_lock = threading.Lock()
         self.mqtt_handler = mqtt_handler
         logger.info("NFCCardObserver initialized")
 
-    def update(self, observable, handlers):
+    def update(self, observable, handlers: Tuple[List[Any], List[Card]]) -> None:
         """Called when card events occur"""
         logger.debug(
             "Observer update called with %d handlers", len(handlers) if handlers else 0
@@ -105,12 +107,16 @@ class NFCCardObserver(CardObserver):
             logger.error("Error in observer update: %s", e)
             logger.debug("Exception details:", exc_info=True)
 
-    def _process_card(self, card):
+    def _process_card(self, card: Card) -> None:
         """Process a card in a separate thread"""
         with self.processing_lock:
             try:
                 # Connect to the card
-                connection: CardConnection = card.createConnection()
+                connection = card.createConnection()
+                if not isinstance(connection, CardConnection):
+                    logger.error("Invalid card connection type: %s", type(connection))
+                    return
+
                 with connection:
                     connection.connect()
 
