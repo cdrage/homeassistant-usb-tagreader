@@ -33,10 +33,6 @@ logger = logging.getLogger(__name__)
 # Global variables for resource cleanup
 _connection: Optional[CardConnection] = None
 _card_monitor: Optional[CardMonitor] = None
-_mqtt_handler: Optional[MQTTHandler] = None
-
-
-
 
 
 def check_pcsc_system() -> bool:
@@ -80,9 +76,10 @@ def check_pcsc_system() -> bool:
 class NFCCardObserver(CardObserver):
     """Observer for NFC card insertion and removal events"""
 
-    def __init__(self):
+    def __init__(self, mqtt_handler: Optional[MQTTHandler] = None):
         self.cards_processed = 0
         self.processing_lock = threading.Lock()
+        self.mqtt_handler = mqtt_handler
         logger.info("NFCCardObserver initialized")
 
     def update(self, observable, handlers):
@@ -109,8 +106,8 @@ class NFCCardObserver(CardObserver):
             for card in removedcards:
                 logger.info("Card removed: %s", toHexString(card.atr))
                 # Publish MQTT state for card removal (no tag present)
-                if _mqtt_handler:
-                    _mqtt_handler.publish_tag_state(None)
+                if self.mqtt_handler:
+                    self.mqtt_handler.publish_tag_state(None)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Error in observer update: %s", e)
@@ -177,8 +174,8 @@ class NFCCardObserver(CardObserver):
                                 ha_tag_found = True
 
                                 # Publish MQTT state for card presence
-                                if _mqtt_handler:
-                                    _mqtt_handler.publish_tag_state(tag_id)
+                                if self.mqtt_handler:
+                                    self.mqtt_handler.publish_tag_state(tag_id)
 
                         # Special handling for Android Application Record (AAR)
                         elif record.is_android_app_record:
@@ -198,8 +195,8 @@ class NFCCardObserver(CardObserver):
                     if not ha_tag_found:
                         # Use card ATR as a unique identifier for non-HA tags
                         card_atr = toHexString(card.atr)
-                        if _mqtt_handler:
-                            _mqtt_handler.publish_tag_state(f"generic_{card_atr}")
+                        if self.mqtt_handler:
+                            self.mqtt_handler.publish_tag_state(f"generic_{card_atr}")
 
                     self.cards_processed += 1
                     logger.info(
@@ -209,8 +206,8 @@ class NFCCardObserver(CardObserver):
                     logger.info("No NDEF data found on card")
                     # Still publish MQTT state for cards without NDEF data
                     card_atr = toHexString(card.atr)
-                    if _mqtt_handler:
-                        _mqtt_handler.publish_tag_state(f"no_ndef_{card_atr}")
+                    if self.mqtt_handler:
+                        self.mqtt_handler.publish_tag_state(f"no_ndef_{card_atr}")
 
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("Error processing card: %s", e)
@@ -255,10 +252,6 @@ def cleanup_resources() -> None:
         finally:
             _connection = None
 
-    # Cleanup MQTT client
-    if _mqtt_handler:
-        _mqtt_handler.cleanup()
-
 
 def signal_handler(signum: int, _frame) -> None:
     """Handle termination signals"""
@@ -284,7 +277,7 @@ def setup_signal_handlers() -> None:
 
 def main() -> int:
     """Main function - uses observer pattern for card monitoring"""
-    global _card_monitor, _mqtt_handler  # pylint: disable=global-statement
+    global _card_monitor  # pylint: disable=global-statement
 
     logger.info("NFC Reader starting up...")
 
@@ -297,8 +290,8 @@ def main() -> int:
         return 1
 
     # Setup MQTT (optional - system can work without it)
-    _mqtt_handler = MQTTHandler()
-    _mqtt_handler.setup()
+    mqtt_handler = MQTTHandler()
+    mqtt_handler.setup()
 
     logger.info("NFC Reader started - waiting for cards...")
     logger.info("Press Ctrl+C to stop")
@@ -307,7 +300,7 @@ def main() -> int:
     try:
         # Create card observer and monitor
         logger.debug("Creating CardObserver...")
-        observer = NFCCardObserver()
+        observer = NFCCardObserver(mqtt_handler)
 
         logger.debug("Creating CardMonitor...")
         _card_monitor = CardMonitor()
