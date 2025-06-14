@@ -13,7 +13,7 @@ from smartcard.Exceptions import NoCardException
 from smartcard.System import readers
 
 from ndef_decoder import NDEFDecoder
-from t2_ndef_reader import T2NDEFReader
+from t2_ndef_reader import read_ndef
 from mqtt_handler import MQTTHandler
 
 HA_TAG_PREFIX = "https://www.home-assistant.io/tag/"
@@ -117,8 +117,7 @@ class NFCCardObserver(CardObserver):
                     logger.info("Connected to card")
 
                     # Read NDEF data
-                    reader = T2NDEFReader()
-                    data, error = reader.read_ndef(connection)
+                    data, error = read_ndef(connection)
 
                     if error:
                         logger.error("Error reading NDEF: %s", error)

@@ -10,14 +10,13 @@ import signal
 import sys
 import threading
 import json
-import logging
 import os
 import paho.mqtt.client as mqtt
 from smartcard.System import readers
 from smartcard.CardRequest import CardRequest
 from smartcard.CardType import AnyCardType
 from smartcard.Exceptions import CardRequestTimeoutException, NoCardException
-from t2_ndef_reader import T2NDEFReader
+from t2_ndef_reader import read_ndef
 from virtualsmartcard.VirtualSmartcard import SmartcardOS, VirtualICC
 import struct
 
@@ -419,8 +418,7 @@ def test_card_reading():
             # Test T2 NDEF reading
             try:
                 print("Testing T2 NDEF reading...")
-                reader = T2NDEFReader()
-                ndef_data, error = reader.read_ndef(cardservice.connection)
+                ndef_data, error = read_ndef(cardservice.connection)
                 
                 if error:
                     print(f"NDEF read error: {error}")
