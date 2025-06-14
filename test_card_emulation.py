@@ -6,7 +6,6 @@ This test requires vsmartcard to be installed and configured.
 
 import subprocess
 import time
-import threading
 import signal
 import sys
 from smartcard.System import readers
@@ -15,94 +14,6 @@ from smartcard.CardType import AnyCardType
 from smartcard.Exceptions import CardRequestTimeoutException, NoCardException
 from t2_ndef_reader import T2NDEFReader
 
-from virtualsmartcard.VirtualSmartcard import SmartcardOS
-import struct
-
-
-class T2NFCCardOS(SmartcardOS):
-    """SmartcardOS implementation for T2 NFC card emulation with NDEF data."""
-    
-    def __init__(self, ndef_data=None):
-        """Initialize T2 NFC card with optional NDEF data."""
-        self.ndef_data = ndef_data or b""
-        self.pages = self._create_t2_structure()
-        
-    def _create_t2_structure(self):
-        """Create T2 tag page structure with NDEF data."""
-        pages = {}
-        
-        # Page 0-1: UID (can be fixed for testing)
-        pages[0] = [0x04, 0x12, 0x34, 0x56]  # UID part 1
-        pages[1] = [0x78, 0x9A, 0xBC, 0xDE]  # UID part 2
-        
-        # Page 2: Internal/lock bytes
-        pages[2] = [0x00, 0x00, 0x00, 0x00]
-        
-        # Page 3: Capability Container
-        pages[3] = [0xE1, 0x10, 0x12, 0x00]  # CC: NDEF capable, ver 1.0, 18 bytes data area
-        
-        if self.ndef_data:
-            # Create NDEF TLV structure
-            if len(self.ndef_data) < 0xFF:
-                # Short form length
-                ndef_tlv = bytes([0x03, len(self.ndef_data)]) + self.ndef_data
-            else:
-                # Long form length (3-byte length field)
-                length_bytes = struct.pack('>H', len(self.ndef_data))
-                ndef_tlv = bytes([0x03, 0xFF]) + length_bytes + self.ndef_data
-            
-            # Add terminator TLV
-            ndef_tlv += bytes([0xFE])
-            
-            # Pack NDEF TLV into pages starting at page 4
-            page_num = 4
-            offset = 0
-            while offset < len(ndef_tlv):
-                page_data = list(ndef_tlv[offset:offset+4])
-                page_data.extend([0x00] * (4 - len(page_data)))  # Pad to 4 bytes
-                pages[page_num] = page_data
-                page_num += 1
-                offset += 4
-        else:
-            # Empty NDEF with just terminator TLV
-            pages[4] = [0xFE, 0x00, 0x00, 0x00]
-            
-        return pages
-    
-    def getATR(self):
-        """Return ATR for T2 NFC card."""
-        # Simplified ATR for NFC Type 2 card
-        return bytes([0x3B, 0x8F, 0x80, 0x01, 0x80, 0x4F, 0x0C, 0xA0, 0x00, 0x00, 0x03, 0x06, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x68])
-    
-    def execute(self, apdu):
-        """Process APDU commands for T2 NFC card."""
-        if len(apdu) < 4:
-            return bytes([0x6F, 0x00])  # Wrong length
-            
-        cla, ins, p1, p2 = apdu[:4]
-        lc = apdu[4] if len(apdu) > 4 else 0
-        
-        # Handle T2 READ command (0xFF 0xB0)
-        if cla == 0xFF and ins == 0xB0:
-            page = p2
-            length = lc if lc > 0 else 4
-            
-            if page in self.pages:
-                page_data = self.pages[page][:length]
-                # Pad with zeros if needed
-                page_data.extend([0x00] * (length - len(page_data)))
-                return bytes(page_data) + bytes([0x90, 0x00])
-            else:
-                # Return zeros for undefined pages
-                return bytes([0x00] * length) + bytes([0x90, 0x00])
-        
-        # Handle SELECT command (basic support)
-        elif cla == 0x00 and ins == 0xA4:
-            return bytes([0x90, 0x00])  # Success
-            
-        # Unknown command
-        else:
-            return bytes([0x6D, 0x00])  # Instruction not supported
 
 
 class VirtualCardEmulator:
@@ -110,55 +21,23 @@ class VirtualCardEmulator:
     
     def __init__(self):
         self.vicc_process = None
-        self.vpcd_process = None
-        self.card_os = None
         
     def start_emulation(self, ndef_data=None):
         """Start virtual card emulation with T2 NFC card containing NDEF data."""
         try:
-            # Create T2 NFC card OS with NDEF data
-            self.card_os = T2NFCCardOS(ndef_data)
+            # Start T2 emulator script with NDEF data
+            if ndef_data:
+                # Pass NDEF data as hex string argument
+                cmd = ['python3', 't2_emulator.py', ndef_data.hex()]
+            else:
+                # Use default NDEF data
+                cmd = ['python3', 't2_emulator.py']
             
-            # Create a temporary script to run vicc with our custom card
-            import tempfile
-            import os
-            script_content = f'''#!/usr/bin/env python3
-import sys
-sys.path.append('{os.getcwd()}')
-from test_card_emulation import T2NFCCardOS
-from virtualsmartcard.VirtualSmartcard import VirtualICC
-
-# Create the card OS with NDEF data
-ndef_data = {repr(ndef_data)}
-card_os = T2NFCCardOS(ndef_data)
-
-# Create and run virtual ICC
-try:
-    vicc = VirtualICC("", "iso7816", "localhost", 35963)
-    vicc.os = card_os
-    vicc.run()
-except Exception as e:
-    print(f"VICC error: {{e}}")
-    sys.exit(1)
-'''
-            
-            # Write the script to a temporary file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-                f.write(script_content)
-                script_path = f.name
-            
-            # Make it executable
-            os.chmod(script_path, 0o755)
-            
-            # Start the script as a subprocess
             self.vicc_process = subprocess.Popen(
-                ['python3', script_path],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
-            
-            # Store script path for cleanup
-            self.script_path = script_path
             
             time.sleep(3)  # Give vicc time to start and connect
             
@@ -174,14 +53,6 @@ except Exception as e:
             self.vicc_process.terminate()
             self.vicc_process.wait()
             self.vicc_process = None
-        
-        # Clean up temporary script
-        if hasattr(self, 'script_path'):
-            import os
-            try:
-                os.unlink(self.script_path)
-            except:
-                pass
 
 
 def create_test_ndef_data():
@@ -291,6 +162,42 @@ def test_card_reading():
         emulator.stop_emulation()
 
 
+def setup_pcsc_environment():
+    """Set up PC/SC environment for testing."""
+    print("Setting up PC/SC environment...")
+    
+    # Check if pcscd is already running
+    try:
+        result = subprocess.run(['pgrep', 'pcscd'], capture_output=True)
+        if result.returncode == 0:
+            print("✓ PC/SC daemon already running")
+            return True
+    except Exception:
+        pass
+    
+    # Start pcscd
+    try:
+        subprocess.run(['sudo', 'pcscd'], check=True, timeout=10)
+        print("✓ PC/SC daemon started")
+        time.sleep(1)  # Give pcscd time to initialize
+        return True
+    except subprocess.TimeoutExpired:
+        print("✓ PC/SC daemon started (backgrounded)")
+        return True
+    except Exception as e:
+        print(f"✗ Failed to start PC/SC daemon: {e}")
+        return False
+
+
+def cleanup_processes():
+    """Clean up any processes started by the test."""
+    try:
+        # Kill any remaining vicc processes
+        subprocess.run(['pkill', '-f', 'python3.*vicc'], stderr=subprocess.DEVNULL)
+    except:
+        pass
+
+
 def main():
     """Run the integration test."""
     print("NFC Card Reading Integration Test")
@@ -299,19 +206,28 @@ def main():
     # Set up signal handler for clean shutdown
     def signal_handler(sig, frame):
         print("\nShutting down...")
+        cleanup_processes()
         sys.exit(0)
     
     signal.signal(signal.SIGINT, signal_handler)
     
-    # Run the test
-    success = test_card_reading()
-    
-    if success:
-        print("\n✓ Integration test PASSED")
-        sys.exit(0)
-    else:
-        print("\n✗ Integration test FAILED")
-        sys.exit(1)
+    try:
+        # Set up PC/SC environment
+        if not setup_pcsc_environment():
+            print("\n✗ Failed to set up PC/SC environment")
+            sys.exit(1)
+        
+        # Run the test
+        success = test_card_reading()
+        
+        if success:
+            print("\n✓ Integration test PASSED")
+            sys.exit(0)
+        else:
+            print("\n✗ Integration test FAILED")
+            sys.exit(1)
+    finally:
+        cleanup_processes()
 
 
 if __name__ == "__main__":
