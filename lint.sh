@@ -30,12 +30,6 @@ check_python() {
     fi
 }
 
-# Install development dependencies
-install_dev_deps() {
-    log_info "Installing development dependencies..."
-    pip install --quiet flake8 black mypy pylint
-}
-
 # Run Python linting and validation
 run_python_checks() {
     log_info "Running Python syntax check..."
@@ -72,7 +66,6 @@ run_python_checks() {
 log_info "Starting Python validation for NFC Reader..."
 
 check_python
-install_dev_deps
 run_python_checks
 
 log_info "Python validation completed successfully!"
