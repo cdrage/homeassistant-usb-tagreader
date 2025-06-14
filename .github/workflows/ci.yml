@@ -28,6 +28,11 @@ jobs:
           DEV_MODE=true
           PYTHON_VARIANT=
     
+    - name: Create output directories
+      run: |
+        mkdir -p test-results coverage-results
+        chmod 777 test-results coverage-results
+    
     - name: Run tests in Docker container
       run: |
         docker run --rm \
