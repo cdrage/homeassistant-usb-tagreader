@@ -26,6 +26,7 @@ jobs:
         tags: test-image
         build-args: |
           DEV_MODE=true
+          PYTHON_VARIANT=
 
   test:
     needs: build
