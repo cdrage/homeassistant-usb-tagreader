@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     gcc \
     swig \
-    procps
+    procps \
+    && rm -rf /var/lib/apt/lists/*
 
 # Conditionally install sudo and vsmartcard for development only
 RUN <<EOF
