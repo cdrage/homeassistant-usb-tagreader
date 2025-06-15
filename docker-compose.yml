@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   nfc-reader:
-    build: .
+    image: ghcr.io/shocklateboy92/homeassistant-usb-tagreader:main
     container_name: nfc-reader
     volumes:
       - /run/pcscd:/run/pcscd  # Mount PCSC socket from host
