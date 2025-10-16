@@ -7,10 +7,11 @@ FROM python:${PYTHON_RELEASE}${PYTHON_VARIANT:+-$PYTHON_VARIANT}
 ARG DEV_MODE=false
 ARG PYTHON_RELEASE
 
-# Install system dependencies for PCSC (client libraries only)
+# Install system dependencies for PCSC (including pcscd daemon)
 RUN apt-get update && apt-get install -y \
     libpcsclite-dev \
     libpcsclite1 \
+    pcscd \
     pcsc-tools \
     python3-pyscard \
     libusb-1.0-0-dev \
@@ -27,7 +28,7 @@ if [ "$DEV_MODE" = "true" ]; then
 
     echo "Installing development packages..."
     apt-get update
-    apt-get install -y sudo pcscd vsmartcard-vpcd vsmartcard-vpicc python3-virtualsmartcard jq help2man mosquitto
+    apt-get install -y sudo vsmartcard-vpcd vsmartcard-vpicc python3-virtualsmartcard jq help2man mosquitto
     rm -rf /var/lib/apt/lists/*
 
     pip install flake8 black mypy pylint pytest pytest-cov
@@ -64,10 +65,9 @@ RUN chmod +x start.sh
 
 # Create a non-root user for running the application
 RUN useradd -m -u 1000 -s /bin/bash nfcuser && \
-    chown -R nfcuser:nfcuser /app
+    chown -R nfcuser:nfcuser /app && \
+    usermod -a -G plugdev nfcuser
 
-# Switch to non-root user
-USER nfcuser
-
+# Run as root to allow pcscd to start (requires root privileges)
 # Run the startup script
 CMD ["./start.sh"]

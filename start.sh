@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Startup script for NFC Reader connecting to host PCSCD
+# Startup script for NFC Reader with its own PCSCD daemon
 
 # Function to log with timestamp
 log_info() {
@@ -11,15 +11,25 @@ log_error() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $1" >&2
 }
 
-log_info "Connecting to host PCSCD daemon..."
+log_info "Starting PCSCD daemon..."
 
-# Check if we can connect to PCSCD socket
-if [ ! -S /run/pcscd/pcscd.comm ]; then
-    log_error "PCSCD socket not found. Make sure PCSCD is running on the host and socket is mounted."
-    log_error "You may need to start PCSCD on the host with: sudo systemctl start pcscd"
-    sleep 5
+# Clean up any leftover pcscd socket from previous runs
+rm -f /run/pcscd/pcscd.comm /run/pcscd/pcscd.pid
+
+# Start pcscd in the background with auto-exit, foreground mode disabled, and polkit disabled
+pcscd --auto-exit --foreground --disable-polkit &
+PCSCD_PID=$!
+
+# Wait a moment for pcscd to initialize
+sleep 2
+
+# Check if pcscd is running
+if ! ps -p $PCSCD_PID > /dev/null 2>&1; then
+    log_error "Failed to start PCSCD daemon"
     exit 1
 fi
+
+log_info "PCSCD daemon started successfully (PID: $PCSCD_PID)"
 
 log_info "Starting NFC Reader application..."
 cd /app 

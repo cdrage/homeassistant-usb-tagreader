@@ -23,36 +23,7 @@ It might work with other NFC readers/tags, but I have no plans on using anything
 
 ## Installation
 
-This requires PC/SC to be installed on the host system. I tried putting it in the Docker container, but after a lot of lost time I just couldn't get it to work without at least having it _installed_ on the host system. At that point there's no benefit to running another version in the container.
-
-### PC/SC
-
-On Raspberry Pi, you can install PC/SC with the following command:
-
-```bash
-sudo apt-get install pcscd pcsc-tools
-```
-
-On [Arch Linux](https://wiki.archlinux.org/title/NFC), you can install PC/SC with the following command:
-
-```bash
-sudo pacman -S pcsclite pcsc-tools
-```
-
-Then you need to start the PC/SC daemon:
-
-```bash
-sudo systemctl enable --now pcscd
-```
-
-You can verify that the PC/SC daemon is running with the following command:
-
-```bash
-pscs_scan
-```
-
-You should see your NFC reader listed, and when you tap an NFC tag, it should show up in the output.
-If this does not happen, `homeassistant-usb-tagreader` will not work so you need to troubleshoot your PC/SC installation.
+The container now includes its own PC/SC daemon, so you don't need to install or configure anything on the host system. Just plug in your USB NFC reader and run the container with USB device access.
 
 ### Home Assistant
 
@@ -60,18 +31,47 @@ You need to have the MQTT integration enabled and configured in Home Assistant. 
 
 [![Add integration to MY Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start?domain=mqtt)
 
-### Docker
+### Docker/Podman
 
-Finally, you need to run the Docker container with access to the host's PC/SC socket.
+Run the container with direct USB access to your NFC reader. The container includes its own PC/SC daemon.
+
+**Using Docker:**
+```bash
+docker run -d --name nfc-reader \
+  --network=host \
+  --device=/dev/bus/usb:/dev/bus/usb \
+  -e LOG_LEVEL=INFO \
+  -e MQTT_BROKER=homeassistant.local \
+  -e MQTT_USERNAME=your-username \
+  -e MQTT_PASSWORD=your-password \
+  --restart=unless-stopped \
+  git.k8s.land/cdrage/nfc-reader:latest
+```
+
+**Using Podman:**
+```bash
+sudo podman run -d --name nfc-reader \
+  --network=host \
+  --device=/dev/bus/usb:/dev/bus/usb \
+  -e LOG_LEVEL=INFO \
+  -e MQTT_BROKER=homeassistant.local \
+  -e MQTT_USERNAME=your-username \
+  -e MQTT_PASSWORD=your-password \
+  --restart=unless-stopped \
+  git.k8s.land/cdrage/nfc-reader:latest
+```
+
+**Using Docker Compose:**
 An example [docker-compose.yml](./docker-compose.yml) file is included in this repository. Here it is for reference:
 
 ```yaml
 services:
   nfc-reader:
-    image: ghcr.io/shocklateboy92/homeassistant-usb-tagreader:main
+    image: git.k8s.land/cdrage/nfc-reader:latest
     container_name: nfc-reader
-    volumes:
-      - /run/pcscd:/run/pcscd # Mount PCSC socket from host
+    network_mode: host
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
     restart: unless-stopped
     environment:
       - LOG_LEVEL=INFO # Set log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -81,11 +81,11 @@ services:
       - MQTT_PASSWORD=your-password
 ```
 
-`your-mqtt-broker` is usually your home assistant instance, which is typically `homeassistant.local`. If you use a non-standard port, you can specify an `MQTT_PORT` environment variable as well. You can see the full list of environment variables in the top of [mqtt_handler.py](./mqtt_handler.py).
+**Configuration:**
 
-`your-username` and `your-password` are the credentials you use to connect to your MQTT broker. If you clicked the giant button above and had the Home Assistant MQTT integration install and configure the MQTT Add-on for you, the usernames and passwords that you use to log into Home Assistant will also work for the MQTT broker.
-
-You can use your regular user if you'd like, but [their documentation](https://github.com/home-assistant/addons/blob/5c01a323ba84e6aa534302ace0b7539d3582e65d/mosquitto/DOCS.md#how-to-use) recommends creating a dedicated user for MQTT.
+- `MQTT_BROKER` is usually your home assistant instance, which is typically `homeassistant.local`. If you use a non-standard port, you can specify an `MQTT_PORT` environment variable as well. You can see the full list of environment variables in the top of [mqtt_handler.py](./mqtt_handler.py).
+- `MQTT_USERNAME` and `MQTT_PASSWORD` are the credentials you use to connect to your MQTT broker. If you clicked the giant button above and had the Home Assistant MQTT integration install and configure the MQTT Add-on for you, the usernames and passwords that you use to log into Home Assistant will also work for the MQTT broker.
+- You can use your regular user if you'd like, but [their documentation](https://github.com/home-assistant/addons/blob/5c01a323ba84e6aa534302ace0b7539d3582e65d/mosquitto/DOCS.md#how-to-use) recommends creating a dedicated user for MQTT.
 
 ## Usage
 
