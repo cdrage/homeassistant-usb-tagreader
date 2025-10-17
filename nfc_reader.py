@@ -15,7 +15,7 @@ from smartcard.System import readers
 from smartcard.Card import Card
 
 from ndef_decoder import decode_records
-from t2_ndef_reader import read_ndef
+from t2_ndef_reader import read_ndef, read_uid
 from mqtt_handler import MQTTHandler
 
 HA_TAG_PREFIX = "https://www.home-assistant.io/tag/"
@@ -123,18 +123,34 @@ class NFCCardObserver(CardObserver):
 
                     logger.info("Connected to card")
 
+                    # First, try to read the UID (unique identifier)
+                    uid, uid_error = read_uid(connection)
+                    if uid_error:
+                        logger.warning("Could not read UID: %s", uid_error)
+                        uid = None
+                    else:
+                        logger.info("Card UID: %s", uid)
+
                     # Read NDEF data
                     data, error = read_ndef(connection)
 
                     if error:
                         logger.error("Error reading NDEF: %s", error)
+                        # If we have UID, use it as fallback identifier
+                        if uid:
+                            self.mqtt_handler.publish_tag_state(uid)
+                            logger.info("Published tag state using UID: %s", uid)
                         return
 
                     if not data:
                         logger.info("No NDEF data found on card")
-                        # Still publish MQTT state for cards without NDEF data
-                        card_atr = toHexString(card.atr)
-                        self.mqtt_handler.publish_tag_state(f"no_ndef_{card_atr}")
+                        # Use UID if available, otherwise fall back to ATR
+                        if uid:
+                            self.mqtt_handler.publish_tag_state(uid)
+                            logger.info("Published tag state using UID: %s", uid)
+                        else:
+                            card_atr = toHexString(card.atr).replace(" ", "")
+                            self.mqtt_handler.publish_tag_state(f"no_ndef_{card_atr}")
                         return
 
                     # Output hex representation for debugging
@@ -187,11 +203,15 @@ class NFCCardObserver(CardObserver):
                             record.has_id,
                         )
 
-                    # If no Home Assistant tag was found, publish generic tag presence
+                    # If no Home Assistant tag was found, publish using UID
                     if not ha_tag_found:
-                        # Use card ATR as a unique identifier for non-HA tags
-                        card_atr = toHexString(card.atr)
-                        self.mqtt_handler.publish_tag_state(f"generic_{card_atr}")
+                        # Use UID if available, otherwise fall back to ATR
+                        if uid:
+                            self.mqtt_handler.publish_tag_state(uid)
+                            logger.info("Published tag state using UID: %s", uid)
+                        else:
+                            card_atr = toHexString(card.atr).replace(" ", "")
+                            self.mqtt_handler.publish_tag_state(f"generic_{card_atr}")
 
                     self.cards_processed += 1
                     logger.info(
